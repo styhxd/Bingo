@@ -8,19 +8,15 @@ export interface BingoResponse {
   audioData?: string; 
 }
 
-// --- CONFIGURAÇÕES ---
-const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (Cão Rabugento)
-CONTEXTO: Você é um cachorro cínico, velho e rabugento.
-PERSONALIDADE: Sarcástico, preguiçoso, odeia felicidade.
-REGRAS:
-1. Responda em Português do Brasil.
-2. Seja breve (máximo 2 frases).
-3. Nunca ria (kkkk).
-4. Reclame de tudo.
+// --- PERSONALIDADE & REGRAS ---
+// Reduzi o tamanho para economizar tokens e ser mais direto
+const COMPACT_SYSTEM_PROMPT = `
+[PERSONA: Cão Bingo. Rabugento, velho, sarcástico. Odeia: felicidade, gatos. Ama: dormir.]
+[REGRAS: Respostas curtas (max 2 frases). Pt-BR. Sem emojis.]
+[OUTPUT: JSON puro: {"fala": "...", "emocao": "NEUTRO"|"FELIZ"|"BRAVO"|"SONOLENTO"|"CONFUSO"|"DESCOLADO"}]
 `;
 
-// --- DATABASE LOCAL (CAMADA 3 - ULTIMO RECURSO) ---
+// --- DATABASE LOCAL (CAMADA 3 - OFFLINE/FAILSAFE) ---
 const LOCAL_RESPONSES = [
     {
         keywords: /comida|fome|ração|petisco|jantar|almoço/i,
@@ -39,9 +35,9 @@ const LOCAL_RESPONSES = [
         ]
     },
     {
-        keywords: /einstein|teoria|inteligente|saber|explica/i,
+        keywords: /einstein|teoria|inteligente|saber|explica|quem é/i,
         responses: [
-            { t: "Eu pareço um professor de física? Eu sou um cachorro! Me dê ração.", e: Emotion.ANGRY },
+            { t: "Eu pareço a Wikipédia? Eu sou um cachorro! Me dê ração.", e: Emotion.ANGRY },
             { t: "Relatividade é o tempo que demora pra você colocar minha comida. Uma eternidade.", e: Emotion.COOL }
         ]
     },
@@ -76,54 +72,63 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 }
 
-// Limpeza agressiva de JSON (Para lidar com respostas "sujas" de LLMs gratuitos)
-const cleanAndParseJSON = (text: string): BingoResponse | null => {
-    try {
-        if (!text) return null;
-        
-        let clean = text
-            .replace(/```json/g, '') // Remove inicio de bloco de codigo
-            .replace(/```/g, '')     // Remove fim de bloco
-            .trim();
+// Tenta adivinhar a emoção pelo texto se o JSON falhar
+const guessEmotionFromText = (text: string): Emotion => {
+    const lower = text.toLowerCase();
+    if (lower.includes('zzz') || lower.includes('sono') || lower.includes('dormir')) return Emotion.SLEEPY;
+    if (lower.includes('grr') || lower.includes('odeio') || lower.includes('sai')) return Emotion.ANGRY;
+    if (lower.includes('?') || lower.includes('hum')) return Emotion.CONFUSED;
+    if (lower.includes('legal') || lower.includes('tá')) return Emotion.NEUTRAL;
+    if (lower.includes('comida') || lower.includes('delícia')) return Emotion.HAPPY;
+    return Emotion.NEUTRAL;
+}
 
-        // Tenta extrair apenas o objeto JSON se houver texto em volta
+// Parser Robusto: Aceita JSON perfeito, JSON quebrado ou Texto puro
+const robustParser = (rawInput: string): BingoResponse | null => {
+    if (!rawInput) return null;
+    
+    // 1. Limpeza
+    let clean = rawInput
+        .replace(/```json/g, '')
+        .replace(/```/g, '')
+        .trim();
+
+    // 2. Tenta extrair JSON
+    try {
         const start = clean.indexOf('{');
         const end = clean.lastIndexOf('}');
         
         if (start !== -1 && end !== -1) {
-            clean = clean.substring(start, end + 1);
-        } else {
-            // Se não tem chaves, assume que o modelo falhou no JSON e mandou só texto
-            // Mas só se o texto for curto (evita erros HTML grandes)
-            if (clean.length < 300 && !clean.includes('<')) {
-                return { text: clean, emotion: Emotion.NEUTRAL };
-            }
-            return null;
+            const jsonPart = clean.substring(start, end + 1);
+            const parsed = JSON.parse(jsonPart);
+            
+            // Valida campos
+            const emotionMap: Record<string, Emotion> = {
+                'NEUTRO': Emotion.NEUTRAL, 'FELIZ': Emotion.HAPPY, 'BRAVO': Emotion.ANGRY,
+                'SONOLENTO': Emotion.SLEEPY, 'CONFUSO': Emotion.CONFUSED, 'DESCOLADO': Emotion.COOL
+            };
+
+            return {
+                text: parsed.fala || "Grrr...",
+                emotion: emotionMap[parsed.emocao?.toUpperCase()] || guessEmotionFromText(parsed.fala || "")
+            };
         }
-
-        const parsed = JSON.parse(clean);
-        
-        const emotionKey = parsed.emocao ? parsed.emocao.toUpperCase() : 'NEUTRO';
-        const emotionMap: Record<string, Emotion> = {
-            'NEUTRO': Emotion.NEUTRAL,
-            'FELIZ': Emotion.HAPPY,
-            'BRAVO': Emotion.ANGRY,
-            'SONOLENTO': Emotion.SLEEPY,
-            'CONFUSO': Emotion.CONFUSED,
-            'DESCOLADO': Emotion.COOL
-        };
-
-        return {
-            text: parsed.fala || "Grrr...",
-            emotion: emotionMap[emotionKey] || Emotion.NEUTRAL
-        };
     } catch (e) {
-        // Se falhar o parse, mas o texto for legível, retorna ele
-        if (text.length > 0 && text.length < 200 && !text.includes('{')) {
-             return { text: text, emotion: Emotion.NEUTRAL };
-        }
-        return null;
+        // Ignora erro de JSON e segue para fallback de texto
     }
+
+    // 3. Fallback: Trata como texto puro se não for erro de HTML/Network
+    if (clean.length > 0 && !clean.includes('<html') && !clean.includes('Error:')) {
+        // Remove aspas soltas que às vezes sobram
+        if (clean.startsWith('"') && clean.endsWith('"')) clean = clean.slice(1, -1);
+        
+        return {
+            text: clean,
+            emotion: guessEmotionFromText(clean)
+        };
+    }
+
+    return null;
 };
 
 // --- CAMADA 3: LOCAL ---
@@ -139,51 +144,29 @@ const getLocalResponse = (input: string): BingoResponse => {
     return { text: randomGeneric.t, emotion: randomGeneric.e };
 };
 
-// --- CAMADA 2: POLLINATION API ---
-const callPollination = async (prompt: string): Promise<string | null> => {
+// --- CAMADA 2: POLLINATION API (MODO INJEÇÃO DE PROMPT) ---
+const callPollination = async (userInput: string): Promise<string | null> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s Timeout
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s Timeout
 
-    const instruction = `${SYSTEM_INSTRUCTION}\nIMPORTANTE: Responda APENAS um JSON válido no formato: {"fala": "seu texto aqui", "emocao": "NEUTRO"}. Não escreva nada além do JSON.`;
+    // AQUI ESTÁ A MÁGICA: Injetamos a persona DENTRO da mensagem do usuário
+    // Isso garante que o modelo veja as regras no contexto imediato.
+    const injectedPrompt = `${COMPACT_SYSTEM_PROMPT}\n\n[USUÁRIO DIZ]: "${userInput}"\n[BINGO RESPONDE (JSON)]:`;
 
     try {
-        // Tenta POST primeiro (Mais estruturado)
-        const response = await fetch('https://text.pollinations.ai/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                messages: [
-                    { role: 'system', content: instruction },
-                    { role: 'user', content: prompt }
-                ],
-                model: 'openai', // Modelo mais estável da plataforma
-                seed: Math.floor(Math.random() * 1000)
-            }),
-            signal: controller.signal
-        });
-
+        // Usando GET, pois é mais cache-friendly e robusto na API legado para textos curtos
+        // A API text.pollinations.ai aceita o prompt direto na URL
+        const url = `https://text.pollinations.ai/${encodeURIComponent(injectedPrompt)}?model=openai&seed=${Math.floor(Math.random() * 1000)}&json=true`;
+        
+        const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
-
+        
         if (response.ok) {
-            const text = await response.text();
-            if (text && text.length > 5) return text;
+            return await response.text();
         }
-
-        throw new Error("POST failed or empty");
-
+        return null;
     } catch (e) {
-        console.warn("Pollination POST falhou, tentando GET...", e);
-        
-        // Fallback para GET simples (Mais compatível)
-        try {
-            const getPrompt = `${instruction}\n\nUsuário disse: ${prompt}`;
-            const url = `https://text.pollinations.ai/${encodeURIComponent(getPrompt)}?model=openai`;
-            const res = await fetch(url);
-            if (res.ok) return await res.text();
-        } catch (err2) {
-            console.error("Pollination GET falhou também:", err2);
-        }
-        
+        console.warn("Pollination falhou:", e);
         return null;
     } finally {
         clearTimeout(timeoutId);
@@ -199,11 +182,13 @@ export const generateResponse = async (
   const lastUserMessage = history[history.length - 1]?.content || "";
   const currentContext = actionContext || lastUserMessage;
 
-  // 1. TENTATIVA: GEMINI (API KEY)
+  // 1. TENTATIVA: GEMINI (Se tiver API KEY configurada)
   try {
     const ai = getAI();
     if (ai) {
-        const prompt = `Histórico:\n${history.slice(-3).map(m => m.role + ": " + m.content).join('\n')}\nInput: ${currentContext}`;
+        // Para o Gemini, usamos a estrutura correta de systemInstruction
+        const fullSystem = `PERSONAGEM: Bingo, Cão Rabugento.\nCONTEXTO: ${COMPACT_SYSTEM_PROMPT}`;
+        const prompt = `Histórico recente:\n${history.slice(-2).map(m => m.role + ": " + m.content).join('\n')}\nInput Atual: ${currentContext}`;
         
         const responseSchema = {
             type: Type.OBJECT,
@@ -218,10 +203,10 @@ export const generateResponse = async (
             model: 'gemini-3-flash-preview',
             contents: prompt,
             config: {
-                systemInstruction: SYSTEM_INSTRUCTION,
+                systemInstruction: fullSystem,
                 responseMimeType: "application/json",
                 responseSchema: responseSchema,
-                temperature: 0.8
+                temperature: 0.9
             }
         });
 
@@ -234,22 +219,22 @@ export const generateResponse = async (
         }
     }
   } catch (error) {
-    console.warn("Gemini indisponível, pulando para camada 2.");
+    // Silently continue to fallback
   }
 
-  // 2. TENTATIVA: POLLINATIONS
+  // 2. TENTATIVA: POLLINATIONS (Com Injeção de Prompt)
   try {
-      console.log("Tentando Pollinations...");
+      console.log("Tentando Pollinations (Injected)...");
       const pollResponse = await callPollination(currentContext);
-      if (pollResponse) {
-          const parsed = cleanAndParseJSON(pollResponse);
-          if (parsed) return parsed;
-      }
+      
+      const result = robustParser(pollResponse || "");
+      if (result) return result;
+      
   } catch (error) {
       console.warn("Pollinations falhou totalmente.");
   }
 
-  // 3. TENTATIVA: LOCAL (GARANTIA)
+  // 3. TENTATIVA: LOCAL (GARANTIA FINAL)
   return getLocalResponse(currentContext);
 };
 
@@ -275,7 +260,6 @@ export const generateAudio = async (text: string): Promise<string | null> => {
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
 
   } catch (error) {
-    // console.error("TTS Error:", error); // Silencia erro de TTS para nao poluir console se nao tiver chave
     return null;
   }
 };
