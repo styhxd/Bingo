@@ -50,8 +50,8 @@ const callPollination = async (system: string, prompt: string): Promise<string |
                     { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown." },
                     { role: 'user', content: prompt }
                 ],
-                model: 'openai', // Usa modelo inteligente disponível via proxy
-                seed: 42,
+                model: 'gpt-4o-mini', // Atualizado para modelo mais inteligente e consistente
+                seed: Math.floor(Math.random() * 10000), // Seed aleatória para variar respostas
                 jsonMode: true 
             })
         });
@@ -59,7 +59,7 @@ const callPollination = async (system: string, prompt: string): Promise<string |
         if (!response.ok) {
              // Fallback para GET simples se o POST falhar por algum motivo
              const fullPrompt = `${system}\n\n${prompt}\n\nResponda APENAS JSON.`;
-             const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}`;
+             const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=gpt-4o-mini`;
              const res2 = await fetch(getUrl);
              return await res2.text();
         }
