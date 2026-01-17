@@ -1,118 +1,191 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Volume2, VolumeX, Hand, Bone, Activity, BatteryWarning } from 'lucide-react';
-import { generateResponse } from './services/llmService';
+import { Send, Mic, RefreshCcw, Hand, Bone, Volume2, Crown } from 'lucide-react';
+import { generateResponse, generateAudio } from './services/llmService';
 import DogAvatar from './components/DogAvatar';
-import { ChatMessage, Emotion } from './types';
+import { ChatMessage, Emotion, GameState } from './types';
 
+// --- LOCAL BRAIN (Apenas frases de carregamento) ---
 const LOADING_PHRASES = [
-    "Coçando a orelha...",
-    "Ignorando você...",
-    "Pensando na janta...",
-    "Suspirando...",
-    "Olhando pro nada..."
+    "Consultando minha agenda...",
+    "Limpando o bigode...",
+    "Ignorando um gato...",
+    "Analisando sua oferta...",
+    "Suspirando profundamente..."
 ];
+
+// --- AUDIO UTILS ---
+const decodeAudioData = async (
+  base64String: string,
+  ctx: AudioContext
+): Promise<AudioBuffer> => {
+  const binaryString = atob(base64String);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  
+  const dataInt16 = new Int16Array(bytes.buffer);
+  const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
+  const channelData = buffer.getChannelData(0);
+  
+  for (let i = 0; i < dataInt16.length; i++) {
+    channelData[i] = dataInt16[i] / 32768.0;
+  }
+  
+  return buffer;
+};
 
 const App: React.FC = () => {
   const [started, setStarted] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loadingText, setLoadingText] = useState("...");
+  const [loadingText, setLoadingText] = useState("Pensando...");
   const [emotion, setEmotion] = useState<Emotion>(Emotion.SLEEPY);
+  const [isListening, setIsListening] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   
-  // --- NOVIDADE: SISTEMA DE PACIÊNCIA ---
-  // Substitui o XP. Se zerar, o cachorro fica bravo.
-  const [patience, setPatience] = useState(100); 
-  const [isRaging, setIsRaging] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [gameState, setGameState] = useState<GameState>({
+    xp: 0,
+    level: 1,
+    unlockedAccessories: ['NONE'],
+    currentAccessory: 'NONE'
+  });
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll automático
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  // Loading animado
   useEffect(() => {
     if (loading) {
       const interval = setInterval(() => {
-        setLoadingText(LOADING_PHRASES[Math.floor(Math.random() * LOADING_PHRASES.length)]);
-      }, 2000);
+        const random = LOADING_PHRASES[Math.floor(Math.random() * LOADING_PHRASES.length)];
+        setLoadingText(random);
+      }, 1500);
       return () => clearInterval(interval);
     }
   }, [loading]);
 
-  // Lógica de FÚRIA (Paciência Zero)
-  useEffect(() => {
-    if (patience <= 0 && !isRaging) {
-      triggerRageMode();
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
-  }, [patience]);
-
-  const triggerRageMode = () => {
-    setIsRaging(true);
-    setEmotion(Emotion.ANGRY);
-    setLoading(false);
-    
-    // Toca som de latido/rosnado usando o Google TTS Hack com texto de latido
-    playAudio(`https://translate.google.com/translate_tts?ie=UTF-8&q=GRRRRRRRRRRRRRRRRRRRRRRR&tl=pt-BR&client=tw-ob`, true);
-    
-    setMessages(prev => [...prev, { role: 'assistant', content: "*LATINDO FURIOSAMENTE*" }]);
-
-    // Recupera após 4 segundos
-    setTimeout(() => {
-      setIsRaging(false);
-      setPatience(40); // Volta um pouco calmo
-      setEmotion(Emotion.NEUTRAL);
-    }, 4000);
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
   };
 
-  const updatePatience = (amount: number) => {
-    if (isRaging) return;
-    setPatience(prev => Math.min(Math.max(prev + amount, 0), 100));
-  };
-
-  /**
-   * PLAYER DE ÁUDIO COM MODIFICADOR DE VOZ
-   * Usa playbackRate para transformar a voz do Google em voz de cachorro velho.
-   */
-  const playAudio = (url: string, isBark = false) => {
+  const playAudio = async (text: string, pcmBase64?: string | null) => {
     if (!voiceEnabled) return;
+    initAudioContext();
 
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+    if (currentSourceRef.current) {
+      currentSourceRef.current.stop();
+      currentSourceRef.current = null;
+    }
+    window.speechSynthesis.cancel();
+
+    if (pcmBase64 && audioContextRef.current) {
+      try {
+        const buffer = await decodeAudioData(pcmBase64, audioContextRef.current);
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = buffer;
+        
+        // VOZ NATURAL - Sem filtros de distorção
+        source.connect(audioContextRef.current.destination);
+
+        source.start();
+        currentSourceRef.current = source;
+        return; 
+      } catch (e) {
+        console.warn("Falha ao decodificar áudio Gemini, usando fallback.", e);
+      }
     }
 
-    const audio = new Audio(url);
-    // TRUQUE: 0.85 deixa a voz grossa e ranzinza. 
-    // 1.2 deixa o latido (GRRR) mais agudo e agressivo.
-    audio.playbackRate = isBark ? 1.1 : 0.85; 
-    
-    audio.play().catch(e => console.error("Erro playback:", e));
-    audioRef.current = audio;
+    // Fallback
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'pt-BR';
+    utterance.pitch = 0.5; // Um pouco mais grave, mas natural
+    utterance.rate = 0.9;
+    window.speechSynthesis.speak(utterance);
   };
 
-  const handleStart = () => {
+  const updateGameState = (amount: number) => {
+    setGameState(prev => {
+      const newXp = prev.xp + amount;
+      const newLevel = Math.floor(newXp / 100) + 1;
+      
+      let newAccessories = [...prev.unlockedAccessories];
+      let newCurrent = prev.currentAccessory;
+
+      // Progressão Linear de Acessórios
+      if (newLevel >= 3 && !newAccessories.includes('HAT')) {
+        newAccessories.push('HAT');
+        newCurrent = 'HAT'; 
+      } 
+      
+      if (newLevel >= 5 && !newAccessories.includes('GLASSES')) {
+        newAccessories.push('GLASSES');
+        newCurrent = 'GLASSES';
+      }
+
+      // Se já tiver óculos, intercala aleatoriamente pra ser divertido
+      if (prev.level >= 6 && newLevel > prev.level) {
+        const items = ['NONE', 'HAT', 'GLASSES', 'BOWTIE'];
+        newCurrent = items[Math.floor(Math.random() * items.length)] as any;
+        if (!newAccessories.includes(newCurrent)) newAccessories.push(newCurrent);
+      }
+
+      return {
+        ...prev,
+        xp: newXp,
+        level: newLevel,
+        unlockedAccessories: newAccessories,
+        currentAccessory: newCurrent
+      };
+    });
+  };
+
+  const handleStart = async () => {
     setStarted(true);
-    const intro = "Já acordei, que saco. O que você quer?";
-    setMessages([{ role: 'assistant', content: intro }]);
-    setEmotion(Emotion.SLEEPY);
-    playAudio(`https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(intro)}&tl=pt-BR&client=tw-ob`);
+    initAudioContext();
+    const intro = "Ora, ora... quem ousa solicitar minha ilustre presença?";
+    
+    if (audioContextRef.current) {
+       const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
+       const source = audioContextRef.current.createBufferSource();
+       source.buffer = emptyBuffer;
+       source.connect(audioContextRef.current.destination);
+       source.start();
+    }
+
+    setLoading(true);
+    setLoadingText("Acordando a realeza...");
+    
+    try {
+        const audioData = await generateAudio(intro);
+        setMessages([{ role: 'assistant', content: intro }]);
+        setEmotion(Emotion.COOL); // Começa descolado
+        playAudio(intro, audioData);
+    } catch (e) {
+        setMessages([{ role: 'assistant', content: intro }]);
+        setEmotion(Emotion.COOL);
+    } finally {
+        setLoading(false);
+    }
   };
 
   const processInteraction = async (userText: string, actionContext?: string) => {
-    if (loading || isRaging) return;
-
-    // Mecânica de Paciência
-    if (actionContext === 'CARINHO') updatePatience(-25); // Odeia ser tocado
-    else if (actionContext === 'FOOD') updatePatience(50); // Ama comida
-    else updatePatience(-10); // Falar cansa ele
+    if (loading) return;
 
     const visibleUserMessage = actionContext 
-        ? (actionContext === 'CARINHO' ? '*Cutuquei*' : '*Dei comida*') 
+        ? (actionContext === 'CARINHO' ? 'Fiz um carinho na sua cabeça!' : 'Toma aqui um petisco gostoso!') 
         : userText;
 
     const newHistory: ChatMessage[] = [...messages, { role: 'user', content: visibleUserMessage }];
@@ -120,22 +193,28 @@ const App: React.FC = () => {
     setInput('');
     setLoading(true);
     setEmotion(Emotion.LOADING);
+    
+    updateGameState(actionContext ? 40 : 15);
 
     try {
         const aiActionContext = actionContext 
-            ? (actionContext === 'CARINHO' ? 'te cutucou' : 'te deu comida') 
+            ? (actionContext === 'CARINHO' ? 'fez carinho na sua cabeça' : 'te ofereceu um petisco') 
             : undefined;
 
         const response = await generateResponse(newHistory, aiActionContext);
         
-        if (!isRaging) {
-            setEmotion(response.emotion);
-            setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
-            playAudio(response.audioUrl);
+        let audioData = null;
+        if (voiceEnabled) {
+            audioData = await generateAudio(response.text);
         }
+
+        setEmotion(response.emotion);
+        setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
+        playAudio(response.text, audioData);
+        
     } catch (e) {
-        // Fallback final
-        setMessages(prev => [...prev, { role: 'assistant', content: "Hmpf." }]);
+        console.error(e);
+        setMessages(prev => [...prev, { role: 'assistant', content: "Ocorreu um erro real. Meus advogados saberão disso." }]);
     } finally {
         setLoading(false);
     }
@@ -150,125 +229,122 @@ const App: React.FC = () => {
     processInteraction('', type === 'PET' ? 'CARINHO' : 'FOOD');
   };
 
-  // --- TELA INICIAL ---
   if (!started) {
     return (
-      <div className="min-h-screen bg-sky-600 flex flex-col items-center justify-center p-6 font-fredoka overflow-hidden relative">
-        <div className="absolute inset-0 bg-sky-700 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/10 to-transparent"></div>
+      <div className="min-h-screen bg-yellow-400 flex flex-col items-center justify-center p-6 font-fredoka overflow-hidden relative">
+        <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-yellow-200 via-orange-400 to-red-500 animate-pulse"></div>
         
-        <div className="bg-stone-100 border-8 border-black p-8 rounded-[2rem] shadow-[12px_12px_0px_0px_rgba(0,0,0,1)] text-center max-w-sm w-full relative z-10 flex flex-col items-center rotate-1">
+        <div className="bg-white border-4 border-black p-8 rounded-[2rem] shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] text-center max-w-sm w-full relative z-10 transform -rotate-1 flex flex-col items-center">
           
-          <div className="mb-8 transform scale-110">
-             <DogAvatar emotion={Emotion.SLEEPY} isTalking={false} onInteraction={handleStart} accessory={'NONE'} />
+          <div className="mb-6 transform scale-110 hover:scale-125 transition-transform duration-500">
+             <DogAvatar 
+                emotion={Emotion.SLEEPY} 
+                isTalking={false} 
+                onInteraction={handleStart} 
+                accessory={'NONE'} 
+             />
           </div>
 
-          <h1 className="text-6xl font-black text-black mb-2 uppercase tracking-tighter">Bingo</h1>
-          <p className="text-stone-500 font-bold text-lg mb-8 bg-white px-4 py-1 rounded-full border-2 border-black">
-            Cão Rabugento
+          <h1 className="text-7xl font-black text-black mb-2 tracking-tighter drop-shadow-sm uppercase" style={{ WebkitTextStroke: '2px white' }}>Bingo</h1>
+          <p className="text-black font-bold text-xl bg-yellow-300 inline-block px-4 py-1 border-2 border-black rounded-full mb-8 rotate-2">
+            O Cão da Realeza
           </p>
           
           <button 
             onClick={handleStart}
-            className="w-full bg-orange-500 hover:bg-orange-400 text-white border-4 border-black text-2xl font-black py-4 rounded-xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all"
+            className="w-full bg-blue-500 hover:bg-blue-400 text-white border-4 border-black text-2xl font-black py-4 rounded-xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3"
           >
-            ACORDAR
+            <Crown size={32} strokeWidth={3} />
+            AUDIÊNCIA
           </button>
         </div>
       </div>
     );
   }
 
-  // --- TELA PRINCIPAL ---
   return (
-    <div className={`flex flex-col h-screen overflow-hidden font-fredoka relative transition-colors duration-300 ${isRaging ? 'bg-red-900' : 'bg-[#a3c9db]'}`}>
+    <div className="flex flex-col h-screen bg-[#87CEEB] overflow-hidden font-fredoka relative">
       
-      {/* Background */}
-      <div className={`absolute bottom-0 w-full h-1/3 border-t-8 border-black z-0 transition-colors ${isRaging ? 'bg-red-800' : 'bg-[#7eb568]'}`}></div>
+      {/* Background Elements */}
+      <div className="absolute bottom-0 w-full h-1/3 bg-green-400 border-t-8 border-black z-0"></div>
+      <div className="absolute top-10 left-10 w-24 h-24 bg-white rounded-full opacity-50 blur-xl"></div>
       
-      {/* HUD SUPERIOR */}
+      {/* HUD */}
       <div className="relative z-20 px-4 pt-4 flex justify-between items-start">
-        
-        {/* Pacienciômetro */}
-        <div className={`flex flex-col w-full max-w-[180px] border-4 border-black rounded-xl p-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white transition-transform ${isRaging ? 'animate-bounce bg-red-200' : ''}`}>
-          <div className="flex justify-between items-center mb-1">
-             <span className="text-xs font-black uppercase text-black flex items-center gap-1">
-               <BatteryWarning size={14} /> Paciência
-             </span>
-             <span className="text-xs font-bold">{patience}%</span>
+        <div className="flex items-center gap-3 bg-white border-4 border-black rounded-2xl p-2 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+          <div className="w-12 h-12 bg-yellow-400 rounded-xl border-2 border-black flex items-center justify-center font-black text-2xl">
+            {gameState.level}
           </div>
-          <div className="w-full h-6 bg-stone-300 rounded-lg border-2 border-black overflow-hidden relative">
-             <div 
-               className={`h-full transition-all duration-300 ${patience < 30 ? 'bg-red-500' : (patience < 60 ? 'bg-yellow-400' : 'bg-green-500')}`}
-               style={{ width: `${patience}%` }}
-             />
+          <div className="flex flex-col pr-2">
+            <span className="text-xs font-black uppercase text-slate-500">Nível de Mordomia</span>
+            <div className="w-32 h-4 bg-slate-200 rounded-full border-2 border-black overflow-hidden relative">
+               <div 
+                 className="h-full bg-gradient-to-r from-yellow-400 to-yellow-500"
+                 style={{ width: `${Math.min((gameState.xp % 100), 100)}%` }}
+               />
+            </div>
           </div>
         </div>
 
-        {/* Botão de Som */}
-        <div className="flex gap-2 ml-4">
-          <button onClick={() => setVoiceEnabled(!voiceEnabled)} className={`p-3 border-4 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all ${voiceEnabled ? 'bg-white text-black' : 'bg-stone-400 text-stone-600'}`}>
-            {voiceEnabled ? <Volume2 size={24} strokeWidth={3} /> : <VolumeX size={24} strokeWidth={3} />}
+        <div className="flex gap-2">
+          <button onClick={() => setVoiceEnabled(!voiceEnabled)} className={`p-3 border-4 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all ${voiceEnabled ? 'bg-white text-black' : 'bg-red-400 text-white'}`}>
+            <Volume2 size={24} strokeWidth={3} />
+          </button>
+          <button onClick={() => window.location.reload()} className="p-3 bg-white text-black border-4 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all">
+            <RefreshCcw size={24} strokeWidth={3} />
           </button>
         </div>
       </div>
 
-      {/* ÁREA DO CACHORRO */}
-      <div className="flex-none h-[40vh] flex flex-col items-center justify-center relative z-10 mt-4">
+      {/* Main Scene */}
+      <div className="flex-none h-[45vh] flex flex-col items-center justify-center relative z-10 mt-4">
+        <DogAvatar 
+          emotion={emotion} 
+          isTalking={false} 
+          onInteraction={() => handleInstantAction('PET')}
+          accessory={gameState.currentAccessory}
+        />
         
-        {isRaging && (
-            <div className="absolute -top-10 text-red-500 font-black text-6xl animate-ping opacity-75 drop-shadow-[0_4px_0_#000]">GRRR!</div>
-        )}
-
-        <div className={`${isRaging ? 'animate-[spin_0.5s_ease-in-out_infinite]' : 'animate-float'}`}>
-            <DogAvatar 
-                emotion={emotion} 
-                isTalking={loading} 
-                onInteraction={() => handleInstantAction('PET')}
-                accessory={'NONE'} 
-            />
-        </div>
-        
-        {/* Ações Rápidas */}
-        <div className="flex gap-4 mt-8">
+        <div className="flex gap-4 mt-6">
             <button 
                 onClick={() => handleInstantAction('PET')}
-                disabled={loading || isRaging}
-                className="group bg-rose-400 hover:bg-rose-300 disabled:bg-stone-500 border-4 border-black px-6 py-3 rounded-2xl font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
+                disabled={loading}
+                className="group bg-pink-400 hover:bg-pink-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Hand size={24} strokeWidth={3} />
-                <span className="hidden md:inline">CUTUCAR</span>
+                <span className="hidden md:inline">MIMO</span>
             </button>
             <button 
                 onClick={() => handleInstantAction('FOOD')}
-                disabled={loading || isRaging}
-                className="group bg-orange-500 hover:bg-orange-400 disabled:bg-stone-500 border-4 border-black px-6 py-3 rounded-2xl font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
+                disabled={loading}
+                className="group bg-orange-400 hover:bg-orange-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Bone size={24} strokeWidth={3} />
-                <span className="hidden md:inline">COMIDA</span>
+                <span className="hidden md:inline">BANQUETE</span>
             </button>
         </div>
       </div>
 
-      {/* ÁREA DE CHAT */}
-      <div className="flex-1 bg-white border-t-8 border-black relative z-20 flex flex-col min-h-0">
+      {/* Chat Area */}
+      <div className="flex-1 bg-white border-t-4 border-black relative z-20 flex flex-col min-h-0">
         
         <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
             {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className={`
-                relative max-w-[85%] px-5 py-3 text-xl font-bold border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)]
+                relative max-w-[85%] px-5 py-3 text-lg font-bold border-4 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,0.1)]
                 ${msg.role === 'user' 
                     ? 'bg-blue-500 text-white rounded-2xl rounded-tr-none mr-2' 
-                    : 'bg-stone-200 text-black rounded-2xl rounded-tl-none ml-2'}
+                    : 'bg-yellow-100 text-black rounded-2xl rounded-tl-none ml-2'}
                 `}>
                 {msg.content}
                 </div>
             </div>
             ))}
             
-            {loading && !isRaging && (
+            {loading && (
              <div className="flex justify-start ml-2">
-                <div className="bg-stone-100 border-4 border-black px-4 py-2 rounded-2xl rounded-tl-none animate-pulse text-stone-500 font-bold">
+                <div className="bg-slate-200 border-4 border-black px-4 py-2 rounded-2xl rounded-tl-none animate-pulse text-slate-500 font-bold italic">
                    {loadingText}
                 </div>
              </div>
@@ -276,22 +352,44 @@ const App: React.FC = () => {
             <div ref={messagesEndRef} />
         </div>
 
-        {/* INPUT */}
-        <div className="p-4 bg-stone-100 border-t-4 border-black">
+        <div className="p-4 bg-slate-100 border-t-4 border-black">
             <div className="flex gap-2 max-w-3xl mx-auto">
+                <button 
+                    onClick={() => {
+                        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+                        if (SpeechRecognition) {
+                          const recognition = new SpeechRecognition();
+                          recognition.lang = 'pt-BR';
+                          recognition.start();
+                          setIsListening(true);
+                          recognition.onresult = (e: any) => {
+                              const text = e.results[0][0].transcript;
+                              processInteraction(text);
+                              setIsListening(false);
+                          };
+                          recognition.onend = () => setIsListening(false);
+                        } else {
+                          alert("Seu navegador não suporta voz :(");
+                        }
+                    }}
+                    className={`p-3 border-4 border-black rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-white text-slate-500'}`}
+                >
+                    <Mic size={24} strokeWidth={3} />
+                </button>
+                
                 <input 
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleSend()}
-                    placeholder={isRaging ? "ELE ESTÁ FURIOSO..." : "Fale logo..."}
-                    className="flex-1 bg-white border-4 border-black p-3 rounded-xl outline-none font-bold text-black placeholder-stone-400 text-lg shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] focus:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all disabled:opacity-50"
-                    disabled={loading || isRaging}
+                    placeholder="Fale com a realeza..."
+                    className="flex-1 bg-white border-4 border-black p-3 rounded-xl outline-none font-bold text-slate-800 placeholder-slate-400 text-lg shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all"
+                    disabled={loading}
                 />
                 
                 <button 
                     onClick={() => handleSend()}
-                    disabled={!input.trim() || loading || isRaging}
-                    className="p-3 bg-green-500 hover:bg-green-400 text-white border-4 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!input.trim() || loading}
+                    className="p-3 bg-blue-500 hover:bg-blue-400 text-white border-4 border-black rounded-xl shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                     <Send size={24} strokeWidth={3} />
                 </button>

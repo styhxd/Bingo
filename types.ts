@@ -16,6 +16,8 @@ export interface ChatMessage {
 export type Accessory = 'NONE' | 'GLASSES' | 'HAT' | 'BOWTIE';
 
 export interface GameState {
-  patience: number; // 0 a 100
-  isRaging: boolean;
+  xp: number;
+  level: number;
+  unlockedAccessories: Accessory[];
+  currentAccessory: Accessory;
 }
