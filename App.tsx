@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Mic, RefreshCcw, Hand, Bone, Volume2, Crown } from 'lucide-react';
+import { Send, Mic, RefreshCcw, Hand, Bone, Volume2, Zap } from 'lucide-react';
 import { generateResponse, generateAudio } from './services/llmService';
 import DogAvatar from './components/DogAvatar';
 import { ChatMessage, Emotion, GameState } from './types';
 
-// --- LOCAL BRAIN (Apenas frases de carregamento) ---
+// --- LOCAL BRAIN (Frases de carregamento rabugentas) ---
 const LOADING_PHRASES = [
-    "Consultando minha agenda...",
-    "Limpando o bigode...",
-    "Ignorando um gato...",
-    "Analisando sua oferta...",
+    "Revirando os olhos...",
+    "Buscando paciência...",
+    "Ignorando sua existência...",
+    "Pensando em uma resposta ácida...",
     "Suspirando profundamente..."
 ];
 
@@ -96,10 +96,7 @@ const App: React.FC = () => {
         const buffer = await decodeAudioData(pcmBase64, audioContextRef.current);
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
-        
-        // VOZ NATURAL - Sem filtros de distorção
         source.connect(audioContextRef.current.destination);
-
         source.start();
         currentSourceRef.current = source;
         return; 
@@ -111,7 +108,7 @@ const App: React.FC = () => {
     // Fallback
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
-    utterance.pitch = 0.5; // Um pouco mais grave, mas natural
+    utterance.pitch = 0.5; // Um pouco mais grave
     utterance.rate = 0.9;
     window.speechSynthesis.speak(utterance);
   };
@@ -135,7 +132,7 @@ const App: React.FC = () => {
         newCurrent = 'GLASSES';
       }
 
-      // Se já tiver óculos, intercala aleatoriamente pra ser divertido
+      // Se já tiver óculos, intercala aleatoriamente
       if (prev.level >= 6 && newLevel > prev.level) {
         const items = ['NONE', 'HAT', 'GLASSES', 'BOWTIE'];
         newCurrent = items[Math.floor(Math.random() * items.length)] as any;
@@ -155,7 +152,7 @@ const App: React.FC = () => {
   const handleStart = async () => {
     setStarted(true);
     initAudioContext();
-    const intro = "Ora, ora... quem ousa solicitar minha ilustre presença?";
+    const intro = "Quem é? Ah, é você. O que você quer? Eu estava ocupado olhando pro nada.";
     
     if (audioContextRef.current) {
        const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
@@ -166,16 +163,16 @@ const App: React.FC = () => {
     }
 
     setLoading(true);
-    setLoadingText("Acordando a realeza...");
+    setLoadingText("Saindo da soneca...");
     
     try {
         const audioData = await generateAudio(intro);
         setMessages([{ role: 'assistant', content: intro }]);
-        setEmotion(Emotion.COOL); // Começa descolado
+        setEmotion(Emotion.ANGRY); // Já acorda bravo
         playAudio(intro, audioData);
     } catch (e) {
         setMessages([{ role: 'assistant', content: intro }]);
-        setEmotion(Emotion.COOL);
+        setEmotion(Emotion.ANGRY);
     } finally {
         setLoading(false);
     }
@@ -185,7 +182,7 @@ const App: React.FC = () => {
     if (loading) return;
 
     const visibleUserMessage = actionContext 
-        ? (actionContext === 'CARINHO' ? 'Fiz um carinho na sua cabeça!' : 'Toma aqui um petisco gostoso!') 
+        ? (actionContext === 'CARINHO' ? 'Fiz um carinho na sua cabeça!' : 'Toma um pouco de ração.') 
         : userText;
 
     const newHistory: ChatMessage[] = [...messages, { role: 'user', content: visibleUserMessage }];
@@ -198,7 +195,7 @@ const App: React.FC = () => {
 
     try {
         const aiActionContext = actionContext 
-            ? (actionContext === 'CARINHO' ? 'fez carinho na sua cabeça' : 'te ofereceu um petisco') 
+            ? (actionContext === 'CARINHO' ? 'fez carinho na sua cabeça' : 'te deu ração barata') 
             : undefined;
 
         const response = await generateResponse(newHistory, aiActionContext);
@@ -214,7 +211,7 @@ const App: React.FC = () => {
         
     } catch (e) {
         console.error(e);
-        setMessages(prev => [...prev, { role: 'assistant', content: "Ocorreu um erro real. Meus advogados saberão disso." }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: "Grr... erro no sistema. Culpa do estagiário." }]);
     } finally {
         setLoading(false);
     }
@@ -247,15 +244,15 @@ const App: React.FC = () => {
 
           <h1 className="text-7xl font-black text-black mb-2 tracking-tighter drop-shadow-sm uppercase" style={{ WebkitTextStroke: '2px white' }}>Bingo</h1>
           <p className="text-black font-bold text-xl bg-yellow-300 inline-block px-4 py-1 border-2 border-black rounded-full mb-8 rotate-2">
-            O Cão da Realeza
+            O Vizinho Rabugento
           </p>
           
           <button 
             onClick={handleStart}
             className="w-full bg-blue-500 hover:bg-blue-400 text-white border-4 border-black text-2xl font-black py-4 rounded-xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3"
           >
-            <Crown size={32} strokeWidth={3} />
-            AUDIÊNCIA
+            <Zap size={32} strokeWidth={3} fill="currentColor" />
+            ACORDAR
           </button>
         </div>
       </div>
@@ -276,11 +273,11 @@ const App: React.FC = () => {
             {gameState.level}
           </div>
           <div className="flex flex-col pr-2">
-            <span className="text-xs font-black uppercase text-slate-500">Nível de Mordomia</span>
+            <span className="text-xs font-black uppercase text-slate-500">Nível de Paciência</span>
             <div className="w-32 h-4 bg-slate-200 rounded-full border-2 border-black overflow-hidden relative">
                <div 
-                 className="h-full bg-gradient-to-r from-yellow-400 to-yellow-500"
-                 style={{ width: `${Math.min((gameState.xp % 100), 100)}%` }}
+                 className="h-full bg-gradient-to-r from-red-400 to-red-600"
+                 style={{ width: `${Math.max(100 - (gameState.xp % 100), 0)}%` }}
                />
             </div>
           </div>
@@ -312,7 +309,7 @@ const App: React.FC = () => {
                 className="group bg-pink-400 hover:bg-pink-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Hand size={24} strokeWidth={3} />
-                <span className="hidden md:inline">MIMO</span>
+                <span className="hidden md:inline">AFAGO</span>
             </button>
             <button 
                 onClick={() => handleInstantAction('FOOD')}
@@ -320,7 +317,7 @@ const App: React.FC = () => {
                 className="group bg-orange-400 hover:bg-orange-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Bone size={24} strokeWidth={3} />
-                <span className="hidden md:inline">BANQUETE</span>
+                <span className="hidden md:inline">RAÇÃO</span>
             </button>
         </div>
       </div>
@@ -381,7 +378,7 @@ const App: React.FC = () => {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleSend()}
-                    placeholder="Fale com a realeza..."
+                    placeholder="Fale logo..."
                     className="flex-1 bg-white border-4 border-black p-3 rounded-xl outline-none font-bold text-slate-800 placeholder-slate-400 text-lg shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all"
                     disabled={loading}
                 />
