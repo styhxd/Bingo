@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Mic, RefreshCcw, Hand, Bone, Volume2 } from 'lucide-react';
+import { Send, Mic, RefreshCcw, Hand, Bone, Volume2, Crown } from 'lucide-react';
 import { generateResponse, generateAudio } from './services/llmService';
 import DogAvatar from './components/DogAvatar';
 import { ChatMessage, Emotion, GameState } from './types';
 
 // --- LOCAL BRAIN (Apenas frases de carregamento) ---
 const LOADING_PHRASES = [
-    "Grrr...",
-    "Hmpf...",
-    "Que saco...",
-    "Afs...",
-    "Zzz..."
+    "Consultando minha agenda...",
+    "Limpando o bigode...",
+    "Ignorando um gato...",
+    "Analisando sua oferta...",
+    "Suspirando profundamente..."
 ];
 
 // --- AUDIO UTILS ---
@@ -97,20 +97,8 @@ const App: React.FC = () => {
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
         
-        // --- PROCESSAMENTO DE VOZ "TIOZÃO/OGRO" ---
-        
-        // 1. Pitch Shift (Mais grave e lento)
-        source.playbackRate.value = 0.92; 
-
-        // 2. Filtro de Graves (Bass Boost) - Tira o som "anasalado/fino"
-        const bassFilter = audioContextRef.current.createBiquadFilter();
-        bassFilter.type = 'lowshelf';
-        bassFilter.frequency.value = 200; // Frequencias graves
-        bassFilter.gain.value = 15; // Aumenta 15dB (Muito grave)
-
-        // 3. Conecta: Fonte -> Filtro -> Saída
-        source.connect(bassFilter);
-        bassFilter.connect(audioContextRef.current.destination);
+        // VOZ NATURAL - Sem filtros de distorção
+        source.connect(audioContextRef.current.destination);
 
         source.start();
         currentSourceRef.current = source;
@@ -123,12 +111,12 @@ const App: React.FC = () => {
     // Fallback
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
-    utterance.pitch = 0.1;
-    utterance.rate = 0.8;
+    utterance.pitch = 0.5; // Um pouco mais grave, mas natural
+    utterance.rate = 0.9;
     window.speechSynthesis.speak(utterance);
   };
 
-  const addXp = (amount: number) => {
+  const updateGameState = (amount: number) => {
     setGameState(prev => {
       const newXp = prev.xp + amount;
       const newLevel = Math.floor(newXp / 100) + 1;
@@ -136,12 +124,22 @@ const App: React.FC = () => {
       let newAccessories = [...prev.unlockedAccessories];
       let newCurrent = prev.currentAccessory;
 
-      if (newLevel >= 2 && !newAccessories.includes('HAT')) {
+      // Progressão Linear de Acessórios
+      if (newLevel >= 3 && !newAccessories.includes('HAT')) {
         newAccessories.push('HAT');
-        if (prev.level < 2) newCurrent = 'HAT'; 
-      } else if (newLevel >= 5 && !newAccessories.includes('GLASSES')) {
+        newCurrent = 'HAT'; 
+      } 
+      
+      if (newLevel >= 5 && !newAccessories.includes('GLASSES')) {
         newAccessories.push('GLASSES');
-        if (prev.level < 5) newCurrent = 'GLASSES';
+        newCurrent = 'GLASSES';
+      }
+
+      // Se já tiver óculos, intercala aleatoriamente pra ser divertido
+      if (prev.level >= 6 && newLevel > prev.level) {
+        const items = ['NONE', 'HAT', 'GLASSES', 'BOWTIE'];
+        newCurrent = items[Math.floor(Math.random() * items.length)] as any;
+        if (!newAccessories.includes(newCurrent)) newAccessories.push(newCurrent);
       }
 
       return {
@@ -157,7 +155,7 @@ const App: React.FC = () => {
   const handleStart = async () => {
     setStarted(true);
     initAudioContext();
-    const intro = "Hmpf. Fala logo o que você quer.";
+    const intro = "Ora, ora... quem ousa solicitar minha ilustre presença?";
     
     if (audioContextRef.current) {
        const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
@@ -168,17 +166,16 @@ const App: React.FC = () => {
     }
 
     setLoading(true);
-    setLoadingText("Acordando...");
+    setLoadingText("Acordando a realeza...");
     
-    // Tenta gerar o áudio. Se falhar (ex: erro de rede/api), não trava o app.
     try {
         const audioData = await generateAudio(intro);
         setMessages([{ role: 'assistant', content: intro }]);
-        setEmotion(Emotion.ANGRY);
+        setEmotion(Emotion.COOL); // Começa descolado
         playAudio(intro, audioData);
     } catch (e) {
         setMessages([{ role: 'assistant', content: intro }]);
-        setEmotion(Emotion.ANGRY);
+        setEmotion(Emotion.COOL);
     } finally {
         setLoading(false);
     }
@@ -188,7 +185,7 @@ const App: React.FC = () => {
     if (loading) return;
 
     const visibleUserMessage = actionContext 
-        ? (actionContext === 'CARINHO' ? '*Tenta fazer carinho*' : '*Oferece comida*') 
+        ? (actionContext === 'CARINHO' ? 'Fiz um carinho na sua cabeça!' : 'Toma aqui um petisco gostoso!') 
         : userText;
 
     const newHistory: ChatMessage[] = [...messages, { role: 'user', content: visibleUserMessage }];
@@ -197,11 +194,11 @@ const App: React.FC = () => {
     setLoading(true);
     setEmotion(Emotion.LOADING);
     
-    addXp(actionContext ? 50 : 20);
+    updateGameState(actionContext ? 40 : 15);
 
     try {
         const aiActionContext = actionContext 
-            ? (actionContext === 'CARINHO' ? 'O usuário tentou encostar em você.' : 'O usuário te ofereceu comida.') 
+            ? (actionContext === 'CARINHO' ? 'fez carinho na sua cabeça' : 'te ofereceu um petisco') 
             : undefined;
 
         const response = await generateResponse(newHistory, aiActionContext);
@@ -217,7 +214,7 @@ const App: React.FC = () => {
         
     } catch (e) {
         console.error(e);
-        setMessages(prev => [...prev, { role: 'assistant', content: "Grrr... (Erro)" }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: "Ocorreu um erro real. Meus advogados saberão disso." }]);
     } finally {
         setLoading(false);
     }
@@ -250,15 +247,15 @@ const App: React.FC = () => {
 
           <h1 className="text-7xl font-black text-black mb-2 tracking-tighter drop-shadow-sm uppercase" style={{ WebkitTextStroke: '2px white' }}>Bingo</h1>
           <p className="text-black font-bold text-xl bg-yellow-300 inline-block px-4 py-1 border-2 border-black rounded-full mb-8 rotate-2">
-            O Cão Resmungão
+            O Cão da Realeza
           </p>
           
           <button 
             onClick={handleStart}
             className="w-full bg-blue-500 hover:bg-blue-400 text-white border-4 border-black text-2xl font-black py-4 rounded-xl shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center justify-center gap-3"
           >
-            <Volume2 size={32} strokeWidth={3} />
-            ACORDAR
+            <Crown size={32} strokeWidth={3} />
+            AUDIÊNCIA
           </button>
         </div>
       </div>
@@ -279,10 +276,10 @@ const App: React.FC = () => {
             {gameState.level}
           </div>
           <div className="flex flex-col pr-2">
-            <span className="text-xs font-black uppercase text-slate-500">Nível de Preguiça</span>
+            <span className="text-xs font-black uppercase text-slate-500">Nível de Mordomia</span>
             <div className="w-32 h-4 bg-slate-200 rounded-full border-2 border-black overflow-hidden relative">
                <div 
-                 className="h-full bg-gradient-to-r from-green-400 to-green-500"
+                 className="h-full bg-gradient-to-r from-yellow-400 to-yellow-500"
                  style={{ width: `${Math.min((gameState.xp % 100), 100)}%` }}
                />
             </div>
@@ -315,7 +312,7 @@ const App: React.FC = () => {
                 className="group bg-pink-400 hover:bg-pink-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Hand size={24} strokeWidth={3} />
-                <span className="hidden md:inline">CARINHO</span>
+                <span className="hidden md:inline">MIMO</span>
             </button>
             <button 
                 onClick={() => handleInstantAction('FOOD')}
@@ -323,7 +320,7 @@ const App: React.FC = () => {
                 className="group bg-orange-400 hover:bg-orange-300 border-4 border-black px-6 py-2 rounded-full font-black text-white text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none transition-all flex items-center gap-2"
             >
                 <Bone size={24} strokeWidth={3} />
-                <span className="hidden md:inline">PETISCO</span>
+                <span className="hidden md:inline">BANQUETE</span>
             </button>
         </div>
       </div>
@@ -384,7 +381,7 @@ const App: React.FC = () => {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && handleSend()}
-                    placeholder="Fale com o Bingo..."
+                    placeholder="Fale com a realeza..."
                     className="flex-1 bg-white border-4 border-black p-3 rounded-xl outline-none font-bold text-slate-800 placeholder-slate-400 text-lg shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all"
                     disabled={loading}
                 />

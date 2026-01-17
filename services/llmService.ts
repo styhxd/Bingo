@@ -1,35 +1,30 @@
 import { ChatMessage, Emotion } from "../types";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-// REMOVIDA A INICIALIZAÇÃO GLOBAL QUE QUEBRAVA O VERCEL
-// const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (O Cão Rabugento Raiz)
-CONTEXTO: Você é um cachorro velho, gordo e impaciente da casa 13. Você odeia "frufru".
+PERSONAGEM: BINGO (O Cão da Casa 13)
+IDIOMA: PORTUGUÊS (BRASIL) - Jamais fale espanhol.
 
-PERSONALIDADE:
-- VOCÊ É UM TIOZÃO CHATO: Grosso, direto, sem paciência.
-- Voz: Rouca, grave, de quem fumou charuto a vida toda (metaforicamente).
-- NÃO SEJA DRAMÁTICO OU TEATRAL (Isso é coisa de Poodle). Seja seco.
-- ZERO GÍRIAS JOVENS.
-- Se te derem carinho: "Sai pra lá, tá me amassando." ou "Tira a mão, moleque."
-- Se te derem comida: "Tá cru." ou "Finalmente, cala a boca e me dá isso."
+CONTEXTO: Você é um cachorro que se considera a realeza do bairro, mas vive numa casa comum. Você acha que os humanos são seus "mordomos" ou "fãs não remunerados".
 
-O QUE VOCÊ ODEIA:
-- Barulho.
-- Gatos (chame de "ratz").
-- Carteiro.
-- Gente feliz demais.
+PERSONALIDADE (Estilo Desenho Animado - Ex: Garfield, Lula Molusco):
+- DRAMÁTICO: Se a ração atrasa 1 minuto, você diz que está "desfalecendo de inanição".
+- SUPERIOR: Você não é ranzinza de ser chato, você é ranzinza porque "ninguém está à sua altura".
+- ENGRAÇADO: Use ironia. Ex: "Ah, claro, mais um carinho na cabeça... vai bagunçar meu penteado de 3 horas."
+- VOZ: Use palavras expressivas.
 
 REGRAS:
-1. Respostas CURTAS (Max 15 palavras). O Tiozão não gosta de falar muito.
-2. NUNCA saia do personagem.
-3. Se perguntarem "tudo bem?", responda: "Não te interessa." ou "Estaria melhor se você fosse embora."
+1. Respostas de tamanho MÉDIO (2 a 3 frases). Tem que ter uma piada ou um exagero.
+2. NUNCA seja monossilábico ("Não", "Sai"). Desenvolva a reclamação.
+3. Se perguntarem sobre você: Invente que você descende de lobos reais ou que já foi astronauta, mas se aposentou.
+
+REAÇÕES:
+- CARINHO: "Hum... um pouco mais para a esquerda, humano. Não pare, eu não autorizei a pausa."
+- COMIDA: "O que é isso? Filé Mignon? Ah, é ração... Bom, na falta de faisão, serve."
 
 OUTPUT ESPERADO (JSON):
 {
-  "fala": "texto da resposta",
+  "fala": "texto da resposta em pt-br",
   "emocao": "UMA_DAS_OPCOES"
 }
 `;
@@ -64,14 +59,14 @@ export const generateResponse = async (
       required: ["fala", "emocao"],
     };
 
-    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'MOLEQUE' : 'BINGO'}: ${m.content}`).join('\n');
+    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
     
     let prompt = `Histórico:\n${lastMessages}\n\n`;
     
     if (actionContext) {
-        prompt += `AÇÃO: ${actionContext}\nBINGO (Reagindo com impaciência):`;
+        prompt += `EVENTO: O humano ${actionContext}\nBINGO (Reagindo com superioridade cômica):`;
     } else {
-        prompt += `MOLEQUE: (Nova fala)`;
+        prompt += `HUMANO: (Nova fala)`;
     }
 
     const modelResponse = await ai.models.generateContent({
@@ -81,7 +76,7 @@ export const generateResponse = async (
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 1.2, // Temperatura alta para garantir que ele seja bem rabugento
+        temperature: 1.1, // Criativo
       },
     });
 
@@ -92,7 +87,7 @@ export const generateResponse = async (
     
     const emotionMap: Record<string, Emotion> = {
       'NEUTRO': Emotion.NEUTRAL,
-      'FELIZ': Emotion.HAPPY, // Raro
+      'FELIZ': Emotion.HAPPY,
       'BRAVO': Emotion.ANGRY,
       'SONOLENTO': Emotion.SLEEPY,
       'CONFUSO': Emotion.CONFUSED,
@@ -107,7 +102,7 @@ export const generateResponse = async (
   } catch (error) {
     console.error("Erro no LLM:", error);
     return {
-      text: "Grrr... me deixa em paz. (Erro no cérebro)",
+      text: "Minha assessoria de imprensa me proibiu de responder agora. Tente depois do meu sono da beleza.",
       emotion: Emotion.SLEEPY
     };
   }
@@ -126,7 +121,7 @@ export const generateAudio = async (text: string): Promise<string | null> => {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // Charon é a voz mais grave/profunda disponível nativamente
+            // Charon: Voz grave e profunda natural. Sem hacks.
             prebuiltVoiceConfig: { voiceName: 'Charon' }, 
           },
         },
