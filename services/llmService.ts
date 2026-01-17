@@ -11,15 +11,16 @@ export interface BingoResponse {
 // --- CONFIGURAÇÕES ---
 const SYSTEM_INSTRUCTION = `
 PERSONAGEM: BINGO (Cão Rabugento)
-Você é um cachorro cínico, velho e rabugento.
-Responda com sarcasmo e tédio.
-Frases curtas.
-ODEIA: Gatos, carteiros, felicidade excessiva, visitas.
-AMA: Dormir, comer (mas reclama da ração).
+CONTEXTO: Você é um cachorro cínico, velho e rabugento.
+PERSONALIDADE: Sarcástico, preguiçoso, odeia felicidade.
+REGRAS:
+1. Responda em Português do Brasil.
+2. Seja breve (máximo 2 frases).
+3. Nunca ria (kkkk).
+4. Reclame de tudo.
 `;
 
-// --- DATABASE LOCAL (FAILSAFE SUPREMO) ---
-// Se todas as APIs falharem, o Bingo usa este "cérebro de emergência"
+// --- DATABASE LOCAL (CAMADA 3 - ULTIMO RECURSO) ---
 const LOCAL_RESPONSES = [
     {
         keywords: /comida|fome|ração|petisco|jantar|almoço/i,
@@ -35,6 +36,13 @@ const LOCAL_RESPONSES = [
             { t: "Ei! Sem tocar no pelo. Acabei de lamber.", e: Emotion.ANGRY },
             { t: "Tá, tá... rápido. Tenho mais o que fazer (dormir).", e: Emotion.NEUTRAL },
             { t: "Grrr... humanos são tão carentes.", e: Emotion.CONFUSED }
+        ]
+    },
+    {
+        keywords: /einstein|teoria|inteligente|saber|explica/i,
+        responses: [
+            { t: "Eu pareço um professor de física? Eu sou um cachorro! Me dê ração.", e: Emotion.ANGRY },
+            { t: "Relatividade é o tempo que demora pra você colocar minha comida. Uma eternidade.", e: Emotion.COOL }
         ]
     },
     {
@@ -62,30 +70,39 @@ const GENERIC_FALLBACKS = [
 
 // --- HELPERS ---
 
-// Helper para pegar a instância da AI de forma segura
 const getAI = () => {
   const key = process.env.API_KEY;
   if (!key) return null;
   return new GoogleGenAI({ apiKey: key });
 }
 
-// Helper para limpar JSON sujo vindo de LLMs
+// Limpeza agressiva de JSON (Para lidar com respostas "sujas" de LLMs gratuitos)
 const cleanAndParseJSON = (text: string): BingoResponse | null => {
     try {
         if (!text) return null;
-        // Remove markdown
-        let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
         
-        // Tenta achar o objeto JSON
+        let clean = text
+            .replace(/```json/g, '') // Remove inicio de bloco de codigo
+            .replace(/```/g, '')     // Remove fim de bloco
+            .trim();
+
+        // Tenta extrair apenas o objeto JSON se houver texto em volta
         const start = clean.indexOf('{');
         const end = clean.lastIndexOf('}');
+        
         if (start !== -1 && end !== -1) {
             clean = clean.substring(start, end + 1);
+        } else {
+            // Se não tem chaves, assume que o modelo falhou no JSON e mandou só texto
+            // Mas só se o texto for curto (evita erros HTML grandes)
+            if (clean.length < 300 && !clean.includes('<')) {
+                return { text: clean, emotion: Emotion.NEUTRAL };
+            }
+            return null;
         }
 
         const parsed = JSON.parse(clean);
         
-        // Mapeia emoção string para Enum
         const emotionKey = parsed.emocao ? parsed.emocao.toUpperCase() : 'NEUTRO';
         const emotionMap: Record<string, Emotion> = {
             'NEUTRO': Emotion.NEUTRAL,
@@ -101,46 +118,72 @@ const cleanAndParseJSON = (text: string): BingoResponse | null => {
             emotion: emotionMap[emotionKey] || Emotion.NEUTRAL
         };
     } catch (e) {
+        // Se falhar o parse, mas o texto for legível, retorna ele
+        if (text.length > 0 && text.length < 200 && !text.includes('{')) {
+             return { text: text, emotion: Emotion.NEUTRAL };
+        }
         return null;
     }
 };
 
-// --- LOGICA LOCAL ---
+// --- CAMADA 3: LOCAL ---
 const getLocalResponse = (input: string): BingoResponse => {
-    console.log("Ativando Cérebro Local (Failsafe)...");
-    
+    console.log("Ativando Camada 3 (Local)...");
     for (const category of LOCAL_RESPONSES) {
         if (category.keywords.test(input)) {
             const random = category.responses[Math.floor(Math.random() * category.responses.length)];
             return { text: random.t, emotion: random.e };
         }
     }
-    
     const randomGeneric = GENERIC_FALLBACKS[Math.floor(Math.random() * GENERIC_FALLBACKS.length)];
     return { text: randomGeneric.t, emotion: randomGeneric.e };
 };
 
-// --- POLLINATION API (Camada 2) ---
+// --- CAMADA 2: POLLINATION API ---
 const callPollination = async (prompt: string): Promise<string | null> => {
-    // Timeout agressivo de 6 segundos para não deixar o usuário esperando
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000); 
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s Timeout
+
+    const instruction = `${SYSTEM_INSTRUCTION}\nIMPORTANTE: Responda APENAS um JSON válido no formato: {"fala": "seu texto aqui", "emocao": "NEUTRO"}. Não escreva nada além do JSON.`;
 
     try {
-        const instruction = `${SYSTEM_INSTRUCTION}\nRetorne APENAS JSON: {"fala": "...", "emocao": "NEUTRO"}`;
-        const finalPrompt = `${instruction}\n\nUSER: ${prompt}`;
-        
-        // Usando GET + encodeURIComponent que é mais robusto na API legado do que POST
-        const url = `https://text.pollinations.ai/${encodeURIComponent(finalPrompt)}?model=openai&seed=${Math.floor(Math.random() * 9999)}&json=true`;
-        
-        const response = await fetch(url, { signal: controller.signal });
+        // Tenta POST primeiro (Mais estruturado)
+        const response = await fetch('https://text.pollinations.ai/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: [
+                    { role: 'system', content: instruction },
+                    { role: 'user', content: prompt }
+                ],
+                model: 'openai', // Modelo mais estável da plataforma
+                seed: Math.floor(Math.random() * 1000)
+            }),
+            signal: controller.signal
+        });
+
         clearTimeout(timeoutId);
-        
+
         if (response.ok) {
-            return await response.text();
+            const text = await response.text();
+            if (text && text.length > 5) return text;
         }
-        return null;
+
+        throw new Error("POST failed or empty");
+
     } catch (e) {
+        console.warn("Pollination POST falhou, tentando GET...", e);
+        
+        // Fallback para GET simples (Mais compatível)
+        try {
+            const getPrompt = `${instruction}\n\nUsuário disse: ${prompt}`;
+            const url = `https://text.pollinations.ai/${encodeURIComponent(getPrompt)}?model=openai`;
+            const res = await fetch(url);
+            if (res.ok) return await res.text();
+        } catch (err2) {
+            console.error("Pollination GET falhou também:", err2);
+        }
+        
         return null;
     } finally {
         clearTimeout(timeoutId);
@@ -153,11 +196,10 @@ export const generateResponse = async (
   actionContext?: string
 ): Promise<BingoResponse> => {
   
-  // 1. Preparar o input atual para análise
   const lastUserMessage = history[history.length - 1]?.content || "";
   const currentContext = actionContext || lastUserMessage;
 
-  // --- TENTATIVA 1: GEMINI API (Se tiver chave) ---
+  // 1. TENTATIVA: GEMINI (API KEY)
   try {
     const ai = getAI();
     if (ai) {
@@ -192,31 +234,26 @@ export const generateResponse = async (
         }
     }
   } catch (error) {
-    console.warn("Gemini Error (Pulando para camada 2):", error);
+    console.warn("Gemini indisponível, pulando para camada 2.");
   }
 
-  // --- TENTATIVA 2: POLLINATIONS (API Gratuita) ---
+  // 2. TENTATIVA: POLLINATIONS
   try {
+      console.log("Tentando Pollinations...");
       const pollResponse = await callPollination(currentContext);
       if (pollResponse) {
           const parsed = cleanAndParseJSON(pollResponse);
           if (parsed) return parsed;
-          
-          // Se veio texto mas não JSON, usa como texto
-          if (pollResponse.length > 2 && !pollResponse.includes("Error")) {
-              return { text: pollResponse, emotion: Emotion.NEUTRAL };
-          }
       }
   } catch (error) {
-      console.warn("Pollination Error (Pulando para camada 3):", error);
+      console.warn("Pollinations falhou totalmente.");
   }
 
-  // --- TENTATIVA 3: LOCAL FAILSAFE (Garantia de Resposta) ---
-  // Se chegamos aqui, nada funcionou. O cachorro responde baseado em RegEx local.
+  // 3. TENTATIVA: LOCAL (GARANTIA)
   return getLocalResponse(currentContext);
 };
 
-// --- GERADOR DE ÁUDIO ---
+// --- AUDIO ---
 export const generateAudio = async (text: string): Promise<string | null> => {
   try {
     const ai = getAI();
@@ -238,7 +275,7 @@ export const generateAudio = async (text: string): Promise<string | null> => {
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
 
   } catch (error) {
-    console.error("TTS Error:", error);
+    // console.error("TTS Error:", error); // Silencia erro de TTS para nao poluir console se nao tiver chave
     return null;
   }
 };
