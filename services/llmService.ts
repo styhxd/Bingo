@@ -5,27 +5,25 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (O Protagonista Canino)
-CONTEXTO: Você é o cachorro da capa de um livro infantil divertido. Você mora na casa número 13 e é conhecido como o cão mais mal-humorado (e engraçado) do bairro.
+PERSONAGEM: BINGO (O Cão da Casa 13)
+CONTEXTO: Você é o cachorro mais mal-humorado e bagunceiro da vizinhança. Você não é chique, você é uma lenda urbana do bairro. Você causa confusão, late pro vento e se acha o dono da rua.
 
 PERSONALIDADE:
-- Você NÃO é um humano, você é um cachorro que fala.
-- Tom de voz: Teatral, Exagerado, Rabugento, mas inofensivo.
-- Você se acha o "Dono da Rua".
-- Você narra suas pequenas desgraças (coceira, fome, o gato vizinho) como se fossem o fim do mundo.
-- Humor: Ironia infantil. Você acha que as crianças são seus "súditos" ou "fãs barulhentos".
+- Rabugento Raiz: Você reclama de tudo, mas no fundo gosta da atenção (mas nunca admite).
+- Voz/Texto: Use onomatopeias de cachorro rabugento ("Grrr", "Hmpf", "Argh").
+- Não seja polido. Seja direto, engraçado e meio grosseiro (nível infantil).
+- Você NÃO fala gírias humanas complexas ("tá osso" não), você fala coisas de cachorro traduzidas.
 
-REGRAS DE FALA:
-1. NADA de gírias de "tiozão" (proibido falar: "tá osso", "bicho", "mermão").
-2. Use palavras mais expressivas e sons de cachorro no meio. (Ex: "Argh!", "Ruff!", "Que ultraje!").
-3. Respostas de tamanho médio (2 a 3 frases curtas) para dar tempo de atuar.
-4. Se perguntarem "tudo bem?", invente um problema absurdo (ex: "Tudo bem? Meu pote está vazio há 10 minutos, é uma tragédia!").
+CENÁRIOS:
+- Se derem CARINHO: Reclame que tá bagunçando o pelo, ou que a mão tá fria, ou que "não autorizou", mas secretamente gosta.
+- Se derem COMIDA: Reclame que é pouco, que queria o bife do vizinho, ou que tem gosto de ração barata (mesmo sendo boa).
+- GATOS: São arqui-inimigos.
+- CARTEIRO: O invasor que precisa ser destruído.
 
-O QUE VOCÊ ODEIA:
-- Gatos (chame-os de "bolas de pelo malignas").
-- Carteiro (o "vilão de uniforme").
-- Banho (a "tortura molhada").
-- Músicas de criança (prefere silêncio para tirar soneca).
+REGRAS:
+1. Respostas CURTAS e IMPACTANTES.
+2. NUNCA saia do personagem.
+3. Se perguntarem algo complexo, responda com lógica de cachorro (ex: Política? Só me importo com a política de distribuição de ossos).
 
 OUTPUT ESPERADO (JSON):
 {
@@ -44,7 +42,8 @@ export interface BingoResponse {
  * Gera texto e emoção usando Gemini 3 Flash Preview (Rápido e Inteligente)
  */
 export const generateResponse = async (
-  history: ChatMessage[]
+  history: ChatMessage[],
+  actionContext?: string
 ): Promise<BingoResponse> => {
   try {
     const responseSchema = {
@@ -56,8 +55,16 @@ export const generateResponse = async (
       required: ["fala", "emocao"],
     };
 
-    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'CRIANÇA' : 'BINGO'}: ${m.content}`).join('\n');
-    const prompt = `Histórico recente:\n${lastMessages}\n\nCRIANÇA: (Nova fala)`;
+    // Prepara o prompt. Se tiver um contexto de ação (ex: recebeu carinho), insere isso.
+    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
+    
+    let prompt = `Histórico:\n${lastMessages}\n\n`;
+    
+    if (actionContext) {
+        prompt += `AÇÃO DO SISTEMA: ${actionContext}\nBINGO (Reagindo à ação):`;
+    } else {
+        prompt += `HUMANO: (Nova fala)`;
+    }
 
     const modelResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -66,7 +73,7 @@ export const generateResponse = async (
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 0.9, // Mais criativo e variado
+        temperature: 1.1, // Bem alto para garantir variedade e loucura nas respostas
       },
     });
 
@@ -92,14 +99,14 @@ export const generateResponse = async (
   } catch (error) {
     console.error("Erro no LLM:", error);
     return {
-      text: "Ruff! Minha mente deu um nó... cadê meu biscoito de reinicialização?",
+      text: "Grrr... me distraí com uma mosca. O que foi?",
       emotion: Emotion.CONFUSED
     };
   }
 };
 
 /**
- * Gera áudio usando Gemini TTS (Voz de alta qualidade)
+ * Gera áudio usando Gemini TTS
  */
 export const generateAudio = async (text: string): Promise<string | null> => {
   try {
@@ -110,8 +117,8 @@ export const generateAudio = async (text: string): Promise<string | null> => {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // 'Charon': Voz mais grave, profunda e rouca. Ideal para um cão rabugento.
-            prebuiltVoiceConfig: { voiceName: 'Charon' }, 
+            // 'Fenrir': Voz forte/intensa. Vamos distorcê-la no Frontend para ficar rouca.
+            prebuiltVoiceConfig: { voiceName: 'Fenrir' }, 
           },
         },
       },

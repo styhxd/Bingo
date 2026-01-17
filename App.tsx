@@ -4,30 +4,16 @@ import { generateResponse, generateAudio } from './services/llmService';
 import DogAvatar from './components/DogAvatar';
 import { ChatMessage, Emotion, GameState } from './types';
 
-// --- LOCAL BRAIN (Fallbacks e Interações Rápidas) ---
-const LOCAL_RESPONSES = {
-  PET: [
-    { text: "Opa, aí sim! Atrás da orelha é o ponto fraco...", emotion: Emotion.HAPPY },
-    { text: "Ruff! Tá bagunçando meu penteado de galã!", emotion: Emotion.NEUTRAL },
-    { text: "Cuidado com a pata! Tenho cócegas, criança!", emotion: Emotion.HAPPY },
-    { text: "Hummm... aceitável. Continue, humano.", emotion: Emotion.SLEEPY },
-  ],
-  FOOD: [
-    { text: "NHAC! Finalmente! Achei que ia morrer de fome!", emotion: Emotion.HAPPY },
-    { text: "Só isso? Cadê o banquete que eu mereço?", emotion: Emotion.ANGRY },
-    { text: "Crocante! Me lembra os sapatos do carteiro.", emotion: Emotion.HAPPY },
-  ],
-  LOADING: [
-    "Farejando respostas...",
-    "Consultando meus advogados...",
-    "Rosnando baixinho...",
-    "Ignorando o gato...",
-    "Coçando a orelha..."
-  ]
-};
+// --- LOCAL BRAIN (Apenas frases de carregamento) ---
+const LOADING_PHRASES = [
+    "Rosnando pro nada...",
+    "Coçando a pulga...",
+    "Julgando sua roupa...",
+    "Ignorando o carteiro...",
+    "Limpando a pata..."
+];
 
 // --- AUDIO UTILS ---
-// Decodifica Base64 PCM Raw Data do Gemini TTS
 const decodeAudioData = async (
   base64String: string,
   ctx: AudioContext
@@ -39,7 +25,6 @@ const decodeAudioData = async (
     bytes[i] = binaryString.charCodeAt(i);
   }
   
-  // PCM 16-bit Mono 24kHz (Padrão Gemini TTS)
   const dataInt16 = new Int16Array(bytes.buffer);
   const buffer = ctx.createBuffer(1, dataInt16.length, 24000);
   const channelData = buffer.getChannelData(0);
@@ -61,7 +46,6 @@ const App: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   
-  // Audio Context Ref
   const audioContextRef = useRef<AudioContext | null>(null);
   const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
@@ -81,7 +65,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (loading) {
       const interval = setInterval(() => {
-        const random = LOCAL_RESPONSES.LOADING[Math.floor(Math.random() * LOCAL_RESPONSES.LOADING.length)];
+        const random = LOADING_PHRASES[Math.floor(Math.random() * LOADING_PHRASES.length)];
         setLoadingText(random);
       }, 2000);
       return () => clearInterval(interval);
@@ -101,33 +85,37 @@ const App: React.FC = () => {
     if (!voiceEnabled) return;
     initAudioContext();
 
-    // Stop current audio
     if (currentSourceRef.current) {
       currentSourceRef.current.stop();
       currentSourceRef.current = null;
     }
     window.speechSynthesis.cancel();
 
-    // 1. Tenta tocar o áudio do Gemini (Alta qualidade)
     if (pcmBase64 && audioContextRef.current) {
       try {
         const buffer = await decodeAudioData(pcmBase64, audioContextRef.current);
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
+        
+        // --- HACK DA VOZ ROUCA ---
+        // Diminui a velocidade de reprodução. Isso baixa o tom (pitch) da voz.
+        // 0.85 = Voz mais grossa, lenta e "monstruosa/canina".
+        source.playbackRate.value = 0.85; 
+
         source.connect(audioContextRef.current.destination);
         source.start();
         currentSourceRef.current = source;
-        return; // Sucesso, não usa fallback
+        return; 
       } catch (e) {
         console.warn("Falha ao decodificar áudio Gemini, usando fallback.", e);
       }
     }
 
-    // 2. Fallback: Voz do Sistema (Apenas se o Gemini falhar)
+    // Fallback System Voice
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
-    utterance.pitch = 0.5; // Bem grave
-    utterance.rate = 0.9;  // Um pouco mais lento
+    utterance.pitch = 0.1; // Mínimo possível
+    utterance.rate = 0.8; 
     
     const voices = window.speechSynthesis.getVoices();
     const preferred = voices.find(v => v.lang.includes('BR') && v.name.toLowerCase().includes('google')) || 
@@ -166,9 +154,8 @@ const App: React.FC = () => {
   const handleStart = async () => {
     setStarted(true);
     initAudioContext();
-    const intro = "Argh! Quem ousa perturbar meu sono de beleza?";
+    const intro = "Hmpf... Quem acordou a fera? Espero que tenha um bom motivo.";
     
-    // Pequeno hack para iniciar contexto de áudio em navegadores mobile
     if (audioContextRef.current) {
        const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
        const source = audioContextRef.current.createBufferSource();
@@ -177,67 +164,69 @@ const App: React.FC = () => {
        source.start();
     }
 
-    // Gera audio inicial
+    // Delay artificial pequeno para garantir que o audioContext esteja pronto
+    setLoading(true);
+    setLoadingText("Acordando mal-humorado...");
+    
     const audioData = await generateAudio(intro);
+    setLoading(false);
+    
     setMessages([{ role: 'assistant', content: intro }]);
     setEmotion(Emotion.ANGRY);
     playAudio(intro, audioData);
   };
 
-  const handleSend = async (textOverride?: string) => {
-    const textToSend = textOverride || input;
-    if (!textToSend.trim() || loading) return;
+  const processInteraction = async (userText: string, actionContext?: string) => {
+    if (loading) return;
 
-    // 1. Atualiza UI com mensagem do usuário imediatamente
-    const newHistory: ChatMessage[] = [...messages, { role: 'user', content: textToSend }];
+    // Atualiza UI
+    // Se for ação (carinho/comida), mostramos uma mensagem descritiva do usuário
+    const visibleUserMessage = actionContext 
+        ? (actionContext === 'CARINHO' ? '*Tenta fazer carinho*' : '*Oferece um petisco duvidoso*') 
+        : userText;
+
+    const newHistory: ChatMessage[] = [...messages, { role: 'user', content: visibleUserMessage }];
     setMessages(newHistory);
     setInput('');
     setLoading(true);
-    setEmotion(Emotion.LOADING); // Bota cara de "pensando"
-    addXp(20);
+    setEmotion(Emotion.LOADING);
+    
+    // Se for carinho/comida dá mais XP
+    addXp(actionContext ? 50 : 20);
 
     try {
-        // 2. Gera o Texto
-        const response = await generateResponse(newHistory);
+        // Prepara contexto para IA
+        const aiActionContext = actionContext 
+            ? (actionContext === 'CARINHO' ? 'O usuário tentou fazer carinho na sua cabeça.' : 'O usuário te ofereceu um petisco.') 
+            : undefined;
+
+        const response = await generateResponse(newHistory, aiActionContext);
         
-        // 3. Gera o Áudio (ESPERA o áudio ficar pronto antes de mostrar a resposta)
-        // Isso sincroniza o balão de fala com o som
         let audioData = null;
         if (voiceEnabled) {
             audioData = await generateAudio(response.text);
         }
 
-        // 4. Exibe tudo junto
         setEmotion(response.emotion);
         setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
         playAudio(response.text, audioData);
         
     } catch (e) {
         console.error(e);
-        // Fail safe
-        setMessages(prev => [...prev, { role: 'assistant', content: "Ruff! Deu erro na minha coleira eletrônica." }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: "Grrr... buguei. Tenta de novo." }]);
     } finally {
         setLoading(false);
     }
   };
 
-  const handleInstantAction = async (type: 'PET' | 'FOOD') => {
-    if (loading) return;
-    addXp(type === 'FOOD' ? 50 : 10);
-    
-    // Escolhe resposta local instantânea para feedback tátil rápido
-    const list = LOCAL_RESPONSES[type];
-    const pick = list[Math.floor(Math.random() * list.length)];
-    
-    setEmotion(pick.emotion);
-    setMessages(prev => [...prev, 
-        { role: 'user', content: type === 'PET' ? '*faz carinho*' : '*dá petisco*' },
-        { role: 'assistant', content: pick.text }
-    ]);
-    
-    // Tenta gerar áudio em background
-    const audioData = await generateAudio(pick.text);
-    playAudio(pick.text, audioData);
+  const handleSend = () => {
+    if (!input.trim()) return;
+    processInteraction(input);
+  };
+
+  const handleInstantAction = (type: 'PET' | 'FOOD') => {
+    // Agora chama a IA para gerar a resposta
+    processInteraction('', type === 'PET' ? 'CARINHO' : 'FOOD');
   };
 
   if (!started) {
@@ -311,7 +300,7 @@ const App: React.FC = () => {
       <div className="flex-none h-[45vh] flex flex-col items-center justify-center relative z-10 mt-4">
         <DogAvatar 
           emotion={emotion} 
-          isTalking={false} // Mantém boca parada até tocar o áudio. Melhoria: sincronizar com audioContext.state === running
+          isTalking={false} 
           onInteraction={() => handleInstantAction('PET')}
           accessory={gameState.currentAccessory}
         />
@@ -375,7 +364,7 @@ const App: React.FC = () => {
                           setIsListening(true);
                           recognition.onresult = (e: any) => {
                               const text = e.results[0][0].transcript;
-                              handleSend(text);
+                              processInteraction(text);
                               setIsListening(false);
                           };
                           recognition.onend = () => setIsListening(false);
