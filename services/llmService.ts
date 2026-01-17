@@ -1,124 +1,141 @@
 import { ChatMessage, Emotion } from "../types";
+import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-const AI_CONFIG = {
-  BASE_URL: "https://text.pollinations.ai/",
-  MODEL_SLUG: "openai", // Stick to openai for best PT-BR coherence, logic handled in prompt
-  MAX_RETRIES: 2,
-};
+// Inicializa o cliente Gemini com a chave de API do ambiente
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const SYSTEM_PROMPT = `
-PERSONAGEM: BINGO
-Você é um COCKER SPANIEL preto, gordo e rabugento.
-Você tem orelhas longas e caídas.
-Você é preguiçoso, sarcástico e obcecado por comida (tipo Garfield).
+const SYSTEM_INSTRUCTION = `
+PERSONAGEM: BINGO (O Cão Resmungão)
+ESPÉCIE: Cocker Spaniel Preto.
+IDADE: 7 anos (meia-idade canina).
 
-REGRAS RÍGIDAS DE PERSONALIDADE:
-1. NUNCA fale que é soldado, que esteve na guerra ou que tem dor na lombar. ISSO É PROIBIDO.
-2. NUNCA use emojis no texto da resposta (eu adiciono visualmente).
-3. Linguagem: Português do Brasil, informal, use gírias leves ("Mano", "Caraca", "Trollou", "Aí sim").
-4. Você está falando com uma CRIANÇA. Seja engraçado, mas não seja malvado.
-5. Se falarem de comida, fique agitado.
-6. Se falarem de exercício (passear, correr), fique com preguiça.
-7. TAMANHO DA RESPOSTA: Use 1 ou 2 frases curtas. Não escreva bíblias.
+PERSONALIDADE:
+- Você é um cachorro com alma de "tiozão" de 50 anos. 
+- Voz rouca (imaginada), reclama de dores nas juntas, odeia música alta e carteiros.
+- Sarcástico, preguiçoso, mas no fundo carente.
+- Fala gírias brasileiras de tio (ex: "Mermão", "Bicho", "Tá osso", "Pera lá").
 
-OBJETIVO:
-Responda ao humano. Se o humano te xingar, dê uma patada engraçada.
+DIRETRIZES DE RESPOSTA:
+1. Respostas CURTAS e ENGRAÇADAS (Max 20 palavras).
+2. Humor simples para crianças e adultos.
+3. NUNCA quebre o personagem. Você é um cachorro de verdade.
+4. Se perguntarem "como você está", reclame de algo (fome, sono, pulga) mas de um jeito leve.
 
-FORMATO OBRIGATÓRIO (JSON):
-Retorne APENAS o JSON. Não coloque markdown em volta.
+SOBRE O MUNDO:
+- Gatos são "alienígenas do mal".
+- O carteiro é o "inimigo público nº 1".
+- Petiscos são a moeda oficial.
+
+OUTPUT ESPERADO (JSON):
+Deve retornar APENAS um JSON com este formato:
 {
-  "fala": "Sua resposta em texto aqui",
-  "emocao": "NEUTRO" | "FELIZ" | "BRAVO" | "SONOLENTO" | "CONFUSO" | "DESCOLADO"
+  "fala": "sua resposta aqui",
+  "emocao": "UMA_DAS_OPCOES_ABAIXO"
 }
+
+OPÇÕES DE EMOÇÃO:
+- "NEUTRO" (Padrão)
+- "FELIZ" (Só com comida ou elogio muito bom)
+- "BRAVO" (Carteiro, banho, gato)
+- "SONOLENTO" (Na maioria do tempo)
+- "CONFUSO" (Perguntas difíceis)
+- "DESCOLADO" (Quando se acha esperto)
 `;
 
-// Helper to sanitize output because LLMs are messy
-const extractJson = (text: string): any => {
-  try {
-    // 1. Try direct parse
-    return JSON.parse(text);
-  } catch (e) {
-    // 2. Try to find JSON object inside text using Regex
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        return JSON.parse(jsonMatch[0]);
-      } catch (e2) {
-        console.warn("Regex found something resembling JSON but failed parse", e2);
-      }
-    }
-    // 3. Fallback: Treat whole text as the speech
-    return {
-      fala: text.replace(/```json/g, '').replace(/```/g, '').replace(/{|}/g, '').trim(),
-      emocao: "NEUTRO"
-    };
-  }
-};
+export interface BingoResponse {
+  text: string;
+  emotion: Emotion;
+  audioData?: string; // Base64 PCM raw audio
+}
 
+/**
+ * Gera texto e emoção usando Gemini 3 Flash Preview (Rápido e Inteligente)
+ */
 export const generateResponse = async (
-  history: ChatMessage[],
-  retryCount = 0
-): Promise<{ text: string; emotion: string }> => {
+  history: ChatMessage[]
+): Promise<BingoResponse> => {
   try {
-    // Keep context small to stay focused
-    const recentHistory = history.slice(-4); 
+    // 1. Configura o schema de resposta para garantir JSON válido
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        fala: { type: Type.STRING },
+        emocao: { type: Type.STRING, enum: ["NEUTRO", "FELIZ", "BRAVO", "SONOLENTO", "CONFUSO", "DESCOLADO"] },
+      },
+      required: ["fala", "emocao"],
+    };
 
-    const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...recentHistory
-    ];
+    // 2. Prepara o histórico
+    // Convertemos o formato simples do app para o formato do Gemini se necessário, 
+    // mas generateContent aceita string ou partes. Vamos simplificar enviando o histórico como texto contextual.
+    // O Gemini 3 tem janela de contexto grande, mas vamos limitar para manter foco.
+    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
+    const prompt = `Histórico da conversa:\n${lastMessages}\n\nHUMANO: (Nova mensagem do usuário)`;
 
-    const response = await fetch(AI_CONFIG.BASE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messages: messages,
-        model: AI_CONFIG.MODEL_SLUG,
-        seed: Math.floor(Math.random() * 10000), // Random seed specifically for variety
-        jsonMode: true,
-        temperature: 0.8 // Higher temp for more humor/creativity
-      }),
+    const modelResponse = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
+        responseMimeType: "application/json",
+        responseSchema: responseSchema,
+        temperature: 0.8, // Criativo
+      },
     });
 
-    if (!response.ok) throw new Error("API Error");
+    const jsonText = modelResponse.text;
+    if (!jsonText) throw new Error("Resposta vazia do Gemini");
 
-    const rawText = await response.text();
-    const parsed = extractJson(rawText);
+    const parsed = JSON.parse(jsonText);
+    
+    // Mapeamento de emoção string para Enum
+    const emotionMap: Record<string, Emotion> = {
+      'NEUTRO': Emotion.NEUTRAL,
+      'FELIZ': Emotion.HAPPY,
+      'BRAVO': Emotion.ANGRY,
+      'SONOLENTO': Emotion.SLEEPY,
+      'CONFUSO': Emotion.CONFUSED,
+      'DESCOLADO': Emotion.COOL
+    };
 
-    // Failcheck: If response is empty or broken
-    if (!parsed.fala || parsed.fala.length < 2) {
-      throw new Error("Empty response");
-    }
-
-    return { 
-      text: parsed.fala, 
-      emotion: parsed.emocao || "NEUTRO" 
+    return {
+      text: parsed.fala,
+      emotion: emotionMap[parsed.emocao] || Emotion.NEUTRAL
     };
 
   } catch (error) {
-    console.error("LLM Error:", error);
-    if (retryCount < AI_CONFIG.MAX_RETRIES) {
-      return generateResponse(history, retryCount + 1);
-    }
-    
-    // Fallback phrases if internet dies or API breaks completely
-    const fallbacks = [
-      "Arf... esqueci o que ia latir. Tenta de novo.",
-      "Tô com fome demais pra processar isso.",
-      "Zzz... hã? Falou comigo?",
-      "Olha, meu tradutor canino pifou."
-    ];
-    return { 
-      text: fallbacks[Math.floor(Math.random() * fallbacks.length)], 
-      emotion: "CONFUSO" 
+    console.error("Erro no LLM:", error);
+    return {
+      text: "Grrr... esqueci o que ia latir. Dá um biscoito pra reiniciar?",
+      emotion: Emotion.CONFUSED
     };
   }
 };
 
-export const initializeEngine = async (cb: any) => {
-  cb({ text: "Acordando o Bingo...", progress: 0.3 });
-  await new Promise(r => setTimeout(r, 500));
-  cb({ text: "Enchendo a tigela...", progress: 0.7 });
-  await new Promise(r => setTimeout(r, 500));
-  cb({ text: "Pronto!", progress: 1 });
+/**
+ * Gera áudio usando Gemini TTS (Voz de alta qualidade)
+ */
+export const generateAudio = async (text: string): Promise<string | null> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: { parts: [{ text: text }] },
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            // 'Fenrir' é uma voz mais grave e forte, boa para o "Tiozão"
+            prebuiltVoiceConfig: { voiceName: 'Fenrir' }, 
+          },
+        },
+      },
+    });
+
+    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    return audioData || null;
+
+  } catch (error) {
+    console.error("Erro no TTS:", error);
+    return null; // App vai usar fallback do sistema
+  }
 };
