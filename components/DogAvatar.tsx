@@ -1,66 +1,129 @@
-import React from 'react';
-import { Emotion } from '../types';
+import React, { useMemo } from 'react';
+import { Emotion, Accessory } from '../types';
 
 interface DogAvatarProps {
   emotion: Emotion;
   isTalking: boolean;
+  onInteraction: () => void;
+  accessory: Accessory;
 }
 
-const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking }) => {
+const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction, accessory }) => {
   
-  const getContainerStyles = () => {
+  // Dynamic Styles based on Emotion
+  const eyeStyle = useMemo(() => {
     switch (emotion) {
-      case Emotion.ANGRY: return "bg-red-900/40 border-red-500 shadow-red-500/20";
-      case Emotion.HAPPY: return "bg-yellow-900/40 border-yellow-500 shadow-yellow-500/20";
-      case Emotion.SLEEPY: return "bg-blue-900/40 border-blue-500 opacity-80";
-      case Emotion.CONFUSED: return "bg-purple-900/40 border-purple-500";
-      case Emotion.LOADING: return "bg-slate-800 animate-pulse border-slate-600";
-      default: return "bg-slate-800 border-slate-600";
+      case Emotion.ANGRY: return "h-3 rotate-12 bg-white";
+      case Emotion.SLEEPY: return "h-1 bg-slate-800"; // Eyes closed
+      case Emotion.HAPPY: return "h-8 bg-white";
+      case Emotion.CONFUSED: return "h-6 bg-white";
+      case Emotion.COOL: return "h-8 bg-black border-2 border-white"; // Sunglasses logic handled in render, but base eyes
+      default: return "h-6 bg-white"; // Neutral
     }
-  };
+  }, [emotion]);
 
-  const getEmoji = () => {
+  const mouthStyle = useMemo(() => {
+    if (isTalking) return "h-6 w-8 animate-[ping_0.5s_ease-in-out_infinite] bg-red-900 rounded-full";
     switch (emotion) {
-      case Emotion.ANGRY: return "🗯️";
-      case Emotion.HAPPY: return "🍖";
-      case Emotion.SLEEPY: return "💤";
-      case Emotion.CONFUSED: return "❔";
-      case Emotion.LOADING: return "⏳";
-      case Emotion.NEUTRAL: 
-      default: return "😑";
+      case Emotion.HAPPY: return "h-8 w-10 bg-red-700 rounded-b-full border-t-4 border-black";
+      case Emotion.ANGRY: return "h-1 w-12 bg-black rotate-3";
+      case Emotion.SLEEPY: return "h-4 w-4 bg-pink-300 rounded-full translate-x-4"; // Drool?
+      default: return "h-2 w-10 bg-black rounded-full";
     }
-  };
-
-  const getAnimation = () => {
-    if (isTalking) return "animate-bounce";
-    if (emotion === Emotion.ANGRY) return "animate-[wiggle_0.3s_ease-in-out_infinite]";
-    if (emotion === Emotion.SLEEPY) return "animate-pulse";
-    return "";
-  };
+  }, [emotion, isTalking]);
 
   return (
-    <div className="flex flex-col items-center justify-center transition-all duration-500">
-      <div className={`
-        relative w-40 h-40 md:w-56 md:h-56 rounded-full border-4 
-        flex items-center justify-center text-7xl md:text-9xl shadow-2xl transition-colors duration-500
-        ${getContainerStyles()}
-      `}>
-        <div className={`transform transition-transform duration-300 ${getAnimation()} cursor-default select-none`}>
-           {emotion === Emotion.HAPPY ? '🐶' : '🐕'}
+    <div 
+      className="relative w-64 h-64 md:w-80 md:h-80 cursor-pointer group transition-transform duration-300 hover:scale-105" 
+      onClick={onInteraction}
+    >
+      {/* --- EARS (Back Layer) --- */}
+      {/* Left Ear */}
+      <div className={`absolute top-12 -left-8 w-24 h-48 bg-black rounded-[40px] origin-top transform transition-all duration-700 ease-in-out z-10 
+        ${emotion === Emotion.HAPPY ? 'rotate-12 translate-x-2' : '-rotate-6'}
+        ${isTalking ? 'animate-[bounce_0.5s_infinite]' : ''}
+      `}></div>
+      {/* Right Ear */}
+      <div className={`absolute top-12 -right-8 w-24 h-48 bg-black rounded-[40px] origin-top transform transition-all duration-700 ease-in-out z-10
+        ${emotion === Emotion.HAPPY ? '-rotate-12 -translate-x-2' : 'rotate-6'}
+        ${isTalking ? 'animate-[bounce_0.5s_infinite_0.1s]' : ''}
+      `}></div>
+
+      {/* --- HEAD BASE --- */}
+      <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-56 h-52 bg-[#1a1a1a] rounded-[50px] shadow-2xl z-20 overflow-hidden">
+        {/* Shine on forehead */}
+        <div className="absolute top-4 left-10 w-8 h-4 bg-white opacity-10 rounded-full rotate-12"></div>
+      </div>
+
+      {/* --- EYES --- */}
+      <div className="absolute top-20 left-1/2 transform -translate-x-1/2 w-40 flex justify-between z-30 px-2">
+        {/* Left Eye Container */}
+        <div className="relative">
+          {accessory === 'GLASSES' || emotion === Emotion.COOL ? (
+             <span className="text-6xl absolute -top-4 -left-2">🕶️</span>
+          ) : (
+            <div className={`w-10 rounded-full transition-all duration-300 flex items-center justify-center overflow-hidden ${eyeStyle}`}>
+               {/* Pupil */}
+               {emotion !== Emotion.SLEEPY && <div className="w-4 h-4 bg-black rounded-full translate-x-[2px]"></div>}
+            </div>
+          )}
+          {/* Eyebrow */}
+          <div className={`absolute -top-4 left-0 w-10 h-2 bg-slate-700 rounded-full transition-all duration-500
+            ${emotion === Emotion.ANGRY ? 'rotate-45 top-0' : ''}
+            ${emotion === Emotion.CONFUSED ? '-rotate-12 -top-6' : ''}
+          `}></div>
         </div>
-        
-        {/* Balão de Status */}
-        <div className="absolute -top-2 -right-2 bg-slate-900 border border-slate-700 rounded-full w-14 h-14 flex items-center justify-center text-2xl shadow-lg">
-           {getEmoji()}
+
+        {/* Right Eye Container */}
+        <div className="relative">
+           {accessory === 'GLASSES' || emotion === Emotion.COOL ? (
+             <span className="text-6xl absolute -top-4 -left-6 opacity-0">🕶️</span> // Invisible placeholder to keep spacing
+          ) : (
+            <div className={`w-10 rounded-full transition-all duration-300 flex items-center justify-center overflow-hidden ${eyeStyle}`}>
+               {/* Pupil */}
+               {emotion !== Emotion.SLEEPY && <div className="w-4 h-4 bg-black rounded-full -translate-x-[2px]"></div>}
+            </div>
+          )}
+           {/* Eyebrow */}
+           <div className={`absolute -top-4 left-0 w-10 h-2 bg-slate-700 rounded-full transition-all duration-500
+            ${emotion === Emotion.ANGRY ? '-rotate-45 top-0' : ''}
+          `}></div>
         </div>
       </div>
-      
-      <h2 className="mt-4 text-3xl font-extrabold text-slate-100 tracking-wide uppercase drop-shadow-lg">
-        {emotion === Emotion.LOADING ? 'Acordando...' : 'Bingo'}
-      </h2>
-      <p className="text-slate-400 text-sm mt-1 font-medium">
-        {emotion === Emotion.SLEEPY ? '(Ronca alto)' : emotion === Emotion.ANGRY ? '(Rosnando)' : '(Julgando)'}
-      </p>
+
+      {/* --- SNOUT --- */}
+      <div className="absolute top-36 left-1/2 transform -translate-x-1/2 w-28 h-20 bg-[#2a2a2a] rounded-[30px] z-30 flex flex-col items-center">
+        {/* Nose */}
+        <div className="w-14 h-8 bg-black rounded-full mt-2 flex items-center justify-center">
+            <div className="w-4 h-1 bg-white opacity-20 rounded-full -translate-y-1"></div>
+        </div>
+        
+        {/* Mouth */}
+        <div className={`mt-2 transition-all duration-200 ${mouthStyle}`}></div>
+        
+        {/* Tongue (Happy only) */}
+        {emotion === Emotion.HAPPY && (
+          <div className="w-6 h-8 bg-pink-400 rounded-b-full absolute -bottom-4 animate-[pulse_1s_infinite]"></div>
+        )}
+      </div>
+
+      {/* --- ACCESSORIES --- */}
+      {accessory === 'HAT' && (
+        <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 z-40 text-7xl drop-shadow-lg rotate-6">
+          🧢
+        </div>
+      )}
+      {accessory === 'BOWTIE' && (
+        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-40 text-6xl drop-shadow-md">
+          🎀
+        </div>
+      )}
+
+      {/* --- SNOT BUBBLE (Sleepy) --- */}
+      {emotion === Emotion.SLEEPY && (
+        <div className="absolute top-40 right-16 w-8 h-8 bg-blue-200 opacity-60 rounded-full z-50 animate-[ping_2s_infinite]"></div>
+      )}
+
     </div>
   );
 };

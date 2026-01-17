@@ -4,7 +4,8 @@ export enum Emotion {
   ANGRY = 'BRAVO',
   SLEEPY = 'SONOLENTO',
   CONFUSED = 'CONFUSO',
-  LOADING = 'CARREGANDO'
+  LOADING = 'CARREGANDO',
+  COOL = 'DESCOLADO'
 }
 
 export interface ChatMessage {
@@ -12,7 +13,11 @@ export interface ChatMessage {
   content: string;
 }
 
-export interface ModelProgress {
-  text: string;
-  progress: number;
+export type Accessory = 'NONE' | 'GLASSES' | 'HAT' | 'BOWTIE';
+
+export interface GameState {
+  xp: number;
+  level: number;
+  unlockedAccessories: Accessory[];
+  currentAccessory: Accessory;
 }

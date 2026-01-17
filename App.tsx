@@ -1,159 +1,327 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Power, Trash2, Globe } from 'lucide-react';
-import { initializeEngine, generateResponse, parseEmotion } from './services/llmService';
+import { Send, Mic, RefreshCcw, Sparkles, Volume2, Hand } from 'lucide-react';
+import { generateResponse } from './services/llmService';
 import DogAvatar from './components/DogAvatar';
-import { ChatMessage, Emotion } from './types';
+import { ChatMessage, Emotion, GameState } from './types';
+
+// Speech Recognition Types
+declare global {
+  interface Window {
+    webkitSpeechRecognition: any;
+    SpeechRecognition: any;
+  }
+}
 
 const App: React.FC = () => {
-  const [hasStarted, setHasStarted] = useState(false);
+  const [started, setStarted] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [currentInput, setCurrentInput] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [currentEmotion, setCurrentEmotion] = useState<Emotion>(Emotion.SLEEPY);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [emotion, setEmotion] = useState<Emotion>(Emotion.SLEEPY);
+  const [isListening, setIsListening] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  // Game State
+  const [gameState, setGameState] = useState<GameState>({
+    xp: 0,
+    level: 1,
+    unlockedAccessories: ['NONE'],
+    currentAccessory: 'NONE'
+  });
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
-  const handleStart = async () => {
-    setHasStarted(true);
-    setCurrentEmotion(Emotion.NEUTRAL);
-    setMessages([{ role: 'assistant', content: "Aff... quem me acordou? Fala logo." }]);
+  // --- FEATURE: TTS (Text to Speech) ---
+  const speak = (text: string) => {
+    if (!voiceEnabled || !window.speechSynthesis) return;
+    
+    // Stop previous speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'pt-BR';
+    utterance.pitch = 0.6; // Deep voice for a big dog
+    utterance.rate = 1.1;  // Slightly faster
+    
+    // Try to find a male voice
+    const voices = window.speechSynthesis.getVoices();
+    const maleVoice = voices.find(v => v.name.includes('Google Português') || v.name.includes('Daniel'));
+    if (maleVoice) utterance.voice = maleVoice;
+
+    window.speechSynthesis.speak(utterance);
   };
 
-  const handleSendMessage = async () => {
-    if (!currentInput.trim() || isProcessing) return;
-
-    const userMsg: ChatMessage = { role: 'user', content: currentInput };
-    setMessages(prev => [...prev, userMsg]);
-    setCurrentInput('');
-    setIsProcessing(true);
-    setCurrentEmotion(Emotion.LOADING);
-
-    const recentHistory = [...messages, userMsg].slice(-8);
-
-    try {
-      const rawResponse = await generateResponse(recentHistory);
-      const { text, emotion } = parseEmotion(rawResponse);
-      
-      const mappedEmotion = Object.values(Emotion).includes(emotion as Emotion) 
-        ? (emotion as Emotion) 
-        : Emotion.NEUTRAL;
-      
-      setCurrentEmotion(mappedEmotion);
-      setMessages(prev => [...prev, { role: 'assistant', content: text }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: "Grrr... bugou tudo. [CONFUSO]" }]);
-      setCurrentEmotion(Emotion.CONFUSED);
-    } finally {
-      setIsProcessing(false);
-      setTimeout(() => inputRef.current?.focus(), 100);
+  // --- FEATURE: Background Color Mood ---
+  const getBgColor = () => {
+    switch (emotion) {
+      case Emotion.ANGRY: return "bg-red-50";
+      case Emotion.HAPPY: return "bg-yellow-50";
+      case Emotion.SLEEPY: return "bg-slate-100";
+      case Emotion.COOL: return "bg-purple-50";
+      case Emotion.CONFUSED: return "bg-orange-50";
+      default: return "bg-[#F7F9FC]";
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSendMessage();
+  // --- LOGIC: Voice Input ---
+  const toggleListening = () => {
+    if (!('webkitSpeechRecognition' in window)) {
+      alert("Navegador sem suporte a voz! Use o Chrome.");
+      return;
+    }
+    
+    if (isListening) return;
+
+    const recognition = new window.webkitSpeechRecognition();
+    recognition.lang = 'pt-BR';
+    recognition.start();
+    setIsListening(true);
+
+    recognition.onresult = (event: any) => {
+      const text = event.results[0][0].transcript;
+      setInput(text);
+      handleSend(text);
+      setIsListening(false);
+    };
+
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
   };
 
-  const resetChat = () => {
-    setMessages([{ role: 'assistant', content: "Memória apagada. Ainda bem. [SONOLENTO]" }]);
-    setCurrentEmotion(Emotion.SLEEPY);
+  const addXp = (amount: number) => {
+    setGameState(prev => {
+      const newXp = prev.xp + amount;
+      const newLevel = Math.floor(newXp / 50) + 1;
+      
+      let newAccessories = [...prev.unlockedAccessories];
+      let newCurrent = prev.currentAccessory;
+
+      if (newLevel >= 2 && !newAccessories.includes('HAT')) {
+        newAccessories.push('HAT');
+        newCurrent = 'HAT'; 
+      } else if (newLevel >= 4 && !newAccessories.includes('GLASSES')) {
+        newAccessories.push('GLASSES');
+        newCurrent = 'GLASSES';
+      }
+
+      return {
+        ...prev,
+        xp: newXp,
+        level: newLevel,
+        unlockedAccessories: newAccessories,
+        currentAccessory: newCurrent
+      };
+    });
   };
 
-  if (!hasStarted) {
+  const handleStart = () => {
+    setStarted(true);
+    // Initial message
+    const intro = "E aí? Já trouxe minha comida ou só veio gastar meu tempo?";
+    setMessages([{ role: 'assistant', content: intro }]);
+    setEmotion(Emotion.NEUTRAL);
+    setTimeout(() => speak(intro), 500);
+  };
+
+  const handleSend = async (textOverride?: string) => {
+    const textToSend = textOverride || input;
+    if (!textToSend.trim() || loading) return;
+
+    const newHistory: ChatMessage[] = [...messages, { role: 'user', content: textToSend }];
+    setMessages(newHistory);
+    setInput('');
+    setLoading(true);
+    
+    // Determine emotion based on user text keywords while waiting (instant feedback)
+    if (textToSend.match(/comida|biscoito|osso|fome/i)) setEmotion(Emotion.HAPPY);
+    else if (textToSend.match(/chato|feio|bobo/i)) setEmotion(Emotion.ANGRY);
+    else setEmotion(Emotion.LOADING);
+
+    addXp(15);
+
+    // Call LLM
+    const response = await generateResponse(newHistory);
+    
+    // Map response emotion
+    const emotionMap: Record<string, Emotion> = {
+      'NEUTRO': Emotion.NEUTRAL,
+      'FELIZ': Emotion.HAPPY,
+      'BRAVO': Emotion.ANGRY,
+      'SONOLENTO': Emotion.SLEEPY,
+      'CONFUSO': Emotion.CONFUSED,
+      'DESCOLADO': Emotion.COOL
+    };
+
+    const finalEmotion = emotionMap[response.emotion] || Emotion.NEUTRAL;
+    
+    setEmotion(finalEmotion);
+    setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
+    setLoading(false);
+    speak(response.text);
+  };
+
+  const handleInteraction = () => {
+    if (loading) return;
+    addXp(5);
+    setEmotion(Emotion.HAPPY);
+    speak("Ah, aí sim! Coça atrás da orelha agora.");
+  };
+
+  const handleFoodDrop = () => {
+    if (loading) return;
+    addXp(30); 
+    setEmotion(Emotion.HAPPY);
+    const msg = "HAMBÚRGUER?! ISSO SIM É VIDA!";
+    setMessages(prev => [...prev, 
+      { role: 'user', content: '🍔 Joguei um hambúrguer' },
+      { role: 'assistant', content: msg }
+    ]);
+    speak(msg);
+  };
+
+  if (!started) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center select-none">
-        <div className="max-w-md w-full bg-slate-800 p-8 rounded-3xl shadow-2xl border border-slate-700">
-          <div className="text-7xl mb-6 animate-bounce">🐕</div>
-          <h1 className="text-4xl font-black text-white mb-2 tracking-tighter">BINGO</h1>
-          <p className="text-slate-400 mb-8 font-medium">
-            O cachorro mais preguiçoso e resmungão da web.
-          </p>
-
+      <div className="min-h-screen bg-[#F0F4F8] flex flex-col items-center justify-center p-6 relative overflow-hidden font-fredoka">
+        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#4A5568_1px,transparent_1px)] [background-size:20px_20px]"></div>
+        
+        <div className="bg-white p-10 rounded-[3rem] shadow-[0_20px_50px_rgba(0,0,0,0.1)] text-center max-w-sm w-full relative z-10 animate-float border-4 border-slate-100">
+          <div className="text-8xl mb-6 transform -rotate-12">🦴</div>
+          <h1 className="text-6xl font-black text-slate-800 mb-2 tracking-tighter">BINGO</h1>
+          <p className="text-slate-500 font-semibold mb-8 text-xl">O Cão Resmungão</p>
+          
           <button 
             onClick={handleStart}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-2xl transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2 shadow-xl shadow-indigo-500/20"
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white text-2xl font-black py-6 rounded-2xl shadow-[0_8px_0_#1a202c] active:shadow-none active:translate-y-2 transition-all flex items-center justify-center gap-3"
           >
-            <Power size={24} />
-            ACORDAR BINGO
+            <Volume2 size={32} />
+            ACORDAR ELE
           </button>
-
-          <div className="mt-8 pt-4 border-t border-slate-700 flex items-center justify-center gap-2 text-xs text-slate-500">
-            <Globe size={14} className="text-green-400"/>
-            <span>100% Online & Grátis (Pollinations AI)</span>
-          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen max-w-lg mx-auto bg-slate-950 shadow-2xl border-x border-slate-800 relative">
+    <div className={`flex flex-col h-screen ${getBgColor()} transition-colors duration-1000 overflow-hidden font-fredoka`}>
       
-      {/* Header */}
-      <div className="flex-none p-4 bg-slate-900 z-10 border-b border-slate-800/50">
-        <div className="flex justify-between items-center mb-2">
-            <button onClick={() => window.location.reload()} className="p-2 text-slate-500 hover:text-white transition-colors rounded-full hover:bg-slate-800">
-                <Power size={20} />
-            </button>
-            <button onClick={resetChat} className="p-2 text-slate-500 hover:text-red-400 transition-colors rounded-full hover:bg-slate-800" title="Limpar">
-                <Trash2 size={20} />
-            </button>
+      {/* Top Bar */}
+      <div className="bg-white/80 backdrop-blur-md p-4 shadow-sm flex justify-between items-center z-10 border-b border-slate-100">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-yellow-400 rounded-2xl rotate-3 flex items-center justify-center font-black text-yellow-900 border-b-4 border-yellow-600 text-xl shadow-sm">
+            {gameState.level}
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Preguiçômetro</span>
+            <div className="w-32 h-4 bg-slate-200 rounded-full overflow-hidden border border-slate-300">
+               <div 
+                 className="h-full bg-green-400 transition-all duration-500 relative" 
+                 style={{ width: `${(gameState.xp % 50) * 2}%` }}
+               >
+                 <div className="absolute top-0 right-0 w-full h-full bg-white opacity-20 animate-pulse"></div>
+               </div>
+            </div>
+          </div>
         </div>
-        <DogAvatar emotion={currentEmotion} isTalking={isProcessing} />
-      </div>
-
-      {/* Chat */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
-        {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`
-                max-w-[85%] p-4 rounded-3xl text-sm md:text-base font-medium leading-relaxed animate-[fadeIn_0.3s_ease-out]
-                ${msg.role === 'user' 
-                  ? 'bg-indigo-600 text-white rounded-br-none shadow-lg shadow-indigo-900/30' 
-                  : 'bg-slate-800 text-slate-200 rounded-bl-none border border-slate-700'}
-              `}>
-              {msg.content}
-            </div>
-          </div>
-        ))}
-        {isProcessing && (
-          <div className="flex justify-start">
-             <div className="bg-slate-800 px-4 py-3 rounded-3xl rounded-bl-none border border-slate-700 flex gap-1.5 items-center">
-              <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"></span>
-              <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-75"></span>
-              <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-150"></span>
-            </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <div className="flex-none p-4 bg-slate-900 border-t border-slate-800">
-        <div className="relative flex items-center group">
-          <input
-            ref={inputRef}
-            type="text"
-            value={currentInput}
-            onChange={(e) => setCurrentInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Fale com o Bingo..."
-            disabled={isProcessing}
-            className="w-full bg-slate-950 text-white placeholder-slate-600 border border-slate-700 rounded-full py-4 pl-6 pr-14 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-inner"
-          />
-          <button
-            onClick={handleSendMessage}
-            disabled={!currentInput.trim() || isProcessing}
-            className="absolute right-2 p-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 disabled:bg-slate-800 disabled:text-slate-600 transition-all transform active:scale-90 shadow-lg"
-          >
-            <Send size={20} />
+        <div className="flex gap-2">
+          <button onClick={() => setVoiceEnabled(!voiceEnabled)} className={`p-2 rounded-xl ${voiceEnabled ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-400'}`}>
+            {voiceEnabled ? <Volume2 size={24} /> : <Volume2 size={24} className="opacity-50" />}
+          </button>
+          <button onClick={() => window.location.reload()} className="p-2 text-slate-400 hover:text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200">
+            <RefreshCcw size={24} />
           </button>
         </div>
       </div>
+
+      {/* Avatar Scene */}
+      <div className="flex-none pt-4 pb-2 flex flex-col items-center justify-center relative">
+        <DogAvatar 
+          emotion={emotion} 
+          isTalking={loading}
+          onInteraction={handleInteraction}
+          accessory={gameState.currentAccessory}
+        />
+        
+        {/* Interaction Buttons */}
+        <div className="flex gap-4 mt-2">
+            <button 
+            onClick={handleInteraction}
+            disabled={loading}
+            className="bg-white border-2 border-slate-200 hover:border-slate-300 text-slate-600 px-5 py-2 rounded-full font-bold text-sm transition-all flex items-center gap-2 shadow-sm active:scale-95"
+            >
+            <Hand size={18} />
+            CARINHO
+            </button>
+            <button 
+            onClick={handleFoodDrop}
+            disabled={loading}
+            className="bg-orange-100 border-2 border-orange-200 hover:bg-orange-200 text-orange-700 px-5 py-2 rounded-full font-bold text-sm transition-all flex items-center gap-2 shadow-sm active:scale-95"
+            >
+            <Sparkles size={18} />
+            DAR PETISCO
+            </button>
+        </div>
+      </div>
+
+      {/* Chat Area - Comic Style */}
+      <div className="flex-1 overflow-y-auto px-4 space-y-6 pb-4 pt-2">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+             <div className={`
+               relative max-w-[85%] px-6 py-4 text-xl font-bold shadow-sm transition-all animate-in slide-in-from-bottom-2
+               ${msg.role === 'user' 
+                 ? 'bg-blue-500 text-white rounded-2xl rounded-tr-sm' 
+                 : 'bg-white text-slate-800 rounded-3xl rounded-tl-none border-2 border-slate-200'}
+             `}>
+               {msg.content}
+             </div>
+          </div>
+        ))}
+        {loading && (
+          <div className="flex justify-start">
+            <div className="bg-slate-100 px-6 py-4 rounded-3xl rounded-tl-none text-slate-400 font-bold animate-pulse flex items-center gap-2">
+              <span className="animate-bounce">thinking</span>
+              <span className="animate-bounce delay-100">about</span>
+              <span className="animate-bounce delay-200">bacon...</span>
+            </div>
+          </div>
+        )}
+        <div ref={scrollRef} />
+      </div>
+
+      {/* Input Area */}
+      <div className="p-4 bg-white border-t border-slate-100 pb-8">
+        <div className="flex gap-3 items-center max-w-3xl mx-auto">
+          <button 
+            onClick={toggleListening}
+            className={`p-4 rounded-2xl transition-all shadow-[0_4px_0_rgba(0,0,0,0.1)] active:shadow-none active:translate-y-1 ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+          >
+            <Mic size={28} />
+          </button>
+          
+          <input 
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSend()}
+            placeholder="Fale algo para o Bingo..."
+            className="flex-1 bg-slate-100 border-2 border-transparent focus:border-blue-400 p-4 rounded-2xl outline-none font-bold text-slate-700 placeholder-slate-400 transition-all text-lg"
+            disabled={loading}
+          />
+          
+          <button 
+            onClick={() => handleSend()}
+            disabled={!input.trim() || loading}
+            className="p-4 bg-blue-500 text-white rounded-2xl hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_4px_0_#2b6cb0] active:shadow-none active:translate-y-1 transition-all"
+          >
+            <Send size={28} />
+          </button>
+        </div>
+      </div>
+
     </div>
   );
 };

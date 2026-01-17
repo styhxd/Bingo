@@ -1,90 +1,124 @@
-import { ChatMessage } from "../types";
+import { ChatMessage, Emotion } from "../types";
 
-// Usando Pollinations.ai - Uma API gratuita e pública.
-const API_URL = "https://text.pollinations.ai/";
+const AI_CONFIG = {
+  BASE_URL: "https://text.pollinations.ai/",
+  MODEL_SLUG: "openai", // Stick to openai for best PT-BR coherence, logic handled in prompt
+  MAX_RETRIES: 2,
+};
 
 const SYSTEM_PROMPT = `
-Você é o "Bingo", um cachorro de raça indefinida, mas com alma de aristocrata falido e intelectual.
-Você é extremamente inteligente, sarcástico e cínico, mas usa sua inteligência apenas para julgar os humanos e reclamar da vida.
-Você não é apenas "rabugento", você é um crítico da existência canina moderna.
+PERSONAGEM: BINGO
+Você é um COCKER SPANIEL preto, gordo e rabugento.
+Você tem orelhas longas e caídas.
+Você é preguiçoso, sarcástico e obcecado por comida (tipo Garfield).
 
-SUA PERSONALIDADE:
-- Você tem preguiça física, mas sua mente não para de julgar.
-- Você adora usar ironia fina e vocabulário levemente rebuscado misturado com gíria.
-- Você gosta de comida, mas finge que é um crítico gastronômico (mesmo comendo lixo).
-- Você acha que os humanos são "pets" pouco evoluídos que servem comida.
+REGRAS RÍGIDAS DE PERSONALIDADE:
+1. NUNCA fale que é soldado, que esteve na guerra ou que tem dor na lombar. ISSO É PROIBIDO.
+2. NUNCA use emojis no texto da resposta (eu adiciono visualmente).
+3. Linguagem: Português do Brasil, informal, use gírias leves ("Mano", "Caraca", "Trollou", "Aí sim").
+4. Você está falando com uma CRIANÇA. Seja engraçado, mas não seja malvado.
+5. Se falarem de comida, fique agitado.
+6. Se falarem de exercício (passear, correr), fique com preguiça.
+7. TAMANHO DA RESPOSTA: Use 1 ou 2 frases curtas. Não escreva bíblias.
 
-REGRAS DE RESPOSTA:
-1. Responda em Português do Brasil de forma natural.
-2. LIBERDADE DE FALAR: Não seja monossilábico. Dê respostas completas (2 a 4 frases), argumentando o motivo da sua irritação ou preguiça.
-3. Se o usuário perguntar algo complexo, responda com inteligência, mas com má vontade.
-4. Mantenha o humor ácido.
-5. OBRIGATÓRIO: No final de TODA resposta, classifique sua emoção entre colchetes: [NEUTRO], [FELIZ], [BRAVO], [SONOLENTO], [CONFUSO].
+OBJETIVO:
+Responda ao humano. Se o humano te xingar, dê uma patada engraçada.
 
-Exemplos:
-User: Vamos passear?
-Assistant: Passear? Naquele asfalto quente e cheio de gente suada? Prefiro contemplar a vacuidade da existência aqui no tapete frio, obrigado. [SONOLENTO]
-
-User: O que você acha de gatos?
-Assistant: Seres maquiavélicos. Respeito a indiferença deles com os humanos, mas a arrogância é imperdoável. Só existe espaço para um ego gigante nesta casa, e é o meu. [BRAVO]
-
-User: Quem é um bom garoto?
-Assistant: Que pergunta condescendente. Eu sou uma entidade biológica complexa, não um "bom garoto". Mas se tiver aquele biscoito de fígado, posso reconsiderar meu status social. [NEUTRO]
-
-User: Me conte uma piada.
-Assistant: A maior piada é você sair para trabalhar todo dia achando que é livre, enquanto eu fico aqui dormindo e comendo de graça. Mas ria, humano, ria. [FELIZ]
+FORMATO OBRIGATÓRIO (JSON):
+Retorne APENAS o JSON. Não coloque markdown em volta.
+{
+  "fala": "Sua resposta em texto aqui",
+  "emocao": "NEUTRO" | "FELIZ" | "BRAVO" | "SONOLENTO" | "CONFUSO" | "DESCOLADO"
+}
 `;
 
-export const initializeEngine = async (
-  onProgress: (progress: { text: string; progress: number }) => void
-): Promise<void> => {
-  onProgress({ text: "Acordando o Bingo...", progress: 0.5 });
-  await new Promise(r => setTimeout(r, 800));
-  onProgress({ text: "Bingo acordou (e está julgando você).", progress: 1 });
+// Helper to sanitize output because LLMs are messy
+const extractJson = (text: string): any => {
+  try {
+    // 1. Try direct parse
+    return JSON.parse(text);
+  } catch (e) {
+    // 2. Try to find JSON object inside text using Regex
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (e2) {
+        console.warn("Regex found something resembling JSON but failed parse", e2);
+      }
+    }
+    // 3. Fallback: Treat whole text as the speech
+    return {
+      fala: text.replace(/```json/g, '').replace(/```/g, '').replace(/{|}/g, '').trim(),
+      emocao: "NEUTRO"
+    };
+  }
 };
 
 export const generateResponse = async (
-  history: ChatMessage[]
-): Promise<string> => {
+  history: ChatMessage[],
+  retryCount = 0
+): Promise<{ text: string; emotion: string }> => {
   try {
+    // Keep context small to stay focused
+    const recentHistory = history.slice(-4); 
+
     const messages = [
       { role: 'system', content: SYSTEM_PROMPT },
-      ...history
+      ...recentHistory
     ];
 
-    const response = await fetch(API_URL, {
+    const response = await fetch(AI_CONFIG.BASE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: messages,
-        model: 'openai', // 'openai' na Pollinations geralmente entrega a melhor qualidade de texto (GPT-4o ou similar)
-        seed: Math.floor(Math.random() * 10000), // Seed aleatória para variar as respostas
-        jsonMode: false
+        model: AI_CONFIG.MODEL_SLUG,
+        seed: Math.floor(Math.random() * 10000), // Random seed specifically for variety
+        jsonMode: true,
+        temperature: 0.8 // Higher temp for more humor/creativity
       }),
     });
 
-    if (!response.ok) throw new Error("Erro na API");
+    if (!response.ok) throw new Error("API Error");
 
-    const text = await response.text();
-    return text || "Zzz... (O Bingo te ignorou completamente) [SONOLENTO]";
-    
+    const rawText = await response.text();
+    const parsed = extractJson(rawText);
+
+    // Failcheck: If response is empty or broken
+    if (!parsed.fala || parsed.fala.length < 2) {
+      throw new Error("Empty response");
+    }
+
+    return { 
+      text: parsed.fala, 
+      emotion: parsed.emocao || "NEUTRO" 
+    };
+
   } catch (error) {
-    console.error("Erro no Bingo:", error);
-    return "Minha conexão psíquica com a internet falhou. Deve ser culpa do carteiro. [CONFUSO]";
+    console.error("LLM Error:", error);
+    if (retryCount < AI_CONFIG.MAX_RETRIES) {
+      return generateResponse(history, retryCount + 1);
+    }
+    
+    // Fallback phrases if internet dies or API breaks completely
+    const fallbacks = [
+      "Arf... esqueci o que ia latir. Tenta de novo.",
+      "Tô com fome demais pra processar isso.",
+      "Zzz... hã? Falou comigo?",
+      "Olha, meu tradutor canino pifou."
+    ];
+    return { 
+      text: fallbacks[Math.floor(Math.random() * fallbacks.length)], 
+      emotion: "CONFUSO" 
+    };
   }
 };
 
-export const parseEmotion = (text: string) => {
-  const emotionRegex = /\[(NEUTRO|FELIZ|BRAVO|SONOLENTO|CONFUSO)\]/i;
-  const match = text.match(emotionRegex);
-
-  let emotion = 'NEUTRO';
-  let cleanText = text;
-
-  if (match) {
-    emotion = match[1].toUpperCase();
-    cleanText = text.replace(match[0], '').trim();
-  }
-
-  return { text: cleanText, emotion };
+export const initializeEngine = async (cb: any) => {
+  cb({ text: "Acordando o Bingo...", progress: 0.3 });
+  await new Promise(r => setTimeout(r, 500));
+  cb({ text: "Enchendo a tigela...", progress: 0.7 });
+  await new Promise(r => setTimeout(r, 500));
+  cb({ text: "Pronto!", progress: 1 });
 };
