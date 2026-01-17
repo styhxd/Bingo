@@ -7,26 +7,22 @@ import { ChatMessage, Emotion, GameState } from './types';
 // --- LOCAL BRAIN (Fallbacks e Interações Rápidas) ---
 const LOCAL_RESPONSES = {
   PET: [
-    { text: "Isso, coça aí... mais pra esquerda... aaaaah.", emotion: Emotion.HAPPY },
-    { text: "Tá bagunçando meu topete, mas aceito.", emotion: Emotion.NEUTRAL },
-    { text: "Cuidado com a orelha! É sensível, caramba.", emotion: Emotion.ANGRY },
-    { text: "Hummm... tá, te perdoo por hoje.", emotion: Emotion.HAPPY },
-    { text: "Zzz... mão quentinha... zzz...", emotion: Emotion.SLEEPY },
-    { text: "Beleza, já deu. Não sou pelúcia, sou feroz!", emotion: Emotion.COOL },
+    { text: "Opa, aí sim! Atrás da orelha é o ponto fraco...", emotion: Emotion.HAPPY },
+    { text: "Ruff! Tá bagunçando meu penteado de galã!", emotion: Emotion.NEUTRAL },
+    { text: "Cuidado com a pata! Tenho cócegas, criança!", emotion: Emotion.HAPPY },
+    { text: "Hummm... aceitável. Continue, humano.", emotion: Emotion.SLEEPY },
   ],
   FOOD: [
-    { text: "NHAC! Finalmente comida de verdade!", emotion: Emotion.HAPPY },
-    { text: "É só isso? Cadê a picanha?", emotion: Emotion.CONFUSED },
-    { text: "Mastigando... shhh... boca cheia.", emotion: Emotion.HAPPY },
-    { text: "Caiu no chão? Regra dos 5 segundos!", emotion: Emotion.HAPPY },
-    { text: "Tá meio seco... cadê o molho?", emotion: Emotion.ANGRY },
+    { text: "NHAC! Finalmente! Achei que ia morrer de fome!", emotion: Emotion.HAPPY },
+    { text: "Só isso? Cadê o banquete que eu mereço?", emotion: Emotion.ANGRY },
+    { text: "Crocante! Me lembra os sapatos do carteiro.", emotion: Emotion.HAPPY },
   ],
   LOADING: [
-    "Farejando a nuvem...",
-    "Calculando a preguiça...",
-    "Pensando em bacon...",
-    "Julgando o carteiro...",
-    "Traduzindo latidos..."
+    "Farejando respostas...",
+    "Consultando meus advogados...",
+    "Rosnando baixinho...",
+    "Ignorando o gato...",
+    "Coçando a orelha..."
   ]
 };
 
@@ -121,25 +117,23 @@ const App: React.FC = () => {
         source.connect(audioContextRef.current.destination);
         source.start();
         currentSourceRef.current = source;
-        return;
+        return; // Sucesso, não usa fallback
       } catch (e) {
         console.warn("Falha ao decodificar áudio Gemini, usando fallback.", e);
       }
     }
 
-    // 2. Fallback: Voz do Sistema (Tentando achar uma voz grave)
+    // 2. Fallback: Voz do Sistema (Apenas se o Gemini falhar)
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
-    utterance.pitch = 0.6; // Mais grave (Tiozão)
-    utterance.rate = 1.0;
+    utterance.pitch = 0.5; // Bem grave
+    utterance.rate = 0.9;  // Um pouco mais lento
     
     const voices = window.speechSynthesis.getVoices();
-    // Tenta encontrar uma voz masculina brasileira se possível
     const preferred = voices.find(v => v.lang.includes('BR') && v.name.toLowerCase().includes('google')) || 
                       voices.find(v => v.lang.includes('BR'));
     
     if (preferred) utterance.voice = preferred;
-    
     window.speechSynthesis.speak(utterance);
   };
 
@@ -169,45 +163,69 @@ const App: React.FC = () => {
     });
   };
 
-  const handleStart = () => {
+  const handleStart = async () => {
     setStarted(true);
     initAudioContext();
-    const intro = "Finalmente! Achei que ia ficar dormindo o dia todo.";
+    const intro = "Argh! Quem ousa perturbar meu sono de beleza?";
+    
+    // Pequeno hack para iniciar contexto de áudio em navegadores mobile
+    if (audioContextRef.current) {
+       const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
+       const source = audioContextRef.current.createBufferSource();
+       source.buffer = emptyBuffer;
+       source.connect(audioContextRef.current.destination);
+       source.start();
+    }
+
+    // Gera audio inicial
+    const audioData = await generateAudio(intro);
     setMessages([{ role: 'assistant', content: intro }]);
-    setEmotion(Emotion.NEUTRAL);
-    // Dispara a geração de áudio inicial em background
-    generateAudio(intro).then(audio => playAudio(intro, audio));
+    setEmotion(Emotion.ANGRY);
+    playAudio(intro, audioData);
   };
 
   const handleSend = async (textOverride?: string) => {
     const textToSend = textOverride || input;
     if (!textToSend.trim() || loading) return;
 
-    // UI Updates
+    // 1. Atualiza UI com mensagem do usuário imediatamente
     const newHistory: ChatMessage[] = [...messages, { role: 'user', content: textToSend }];
     setMessages(newHistory);
     setInput('');
     setLoading(true);
-    setEmotion(Emotion.LOADING);
+    setEmotion(Emotion.LOADING); // Bota cara de "pensando"
     addXp(20);
 
-    // 1. Gera o Texto (Rápido)
-    const response = await generateResponse(newHistory);
-    
-    setEmotion(response.emotion);
-    setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
-    setLoading(false);
+    try {
+        // 2. Gera o Texto
+        const response = await generateResponse(newHistory);
+        
+        // 3. Gera o Áudio (ESPERA o áudio ficar pronto antes de mostrar a resposta)
+        // Isso sincroniza o balão de fala com o som
+        let audioData = null;
+        if (voiceEnabled) {
+            audioData = await generateAudio(response.text);
+        }
 
-    // 2. Gera o Áudio (Assíncrono para não travar a UI)
-    // O usuário já lê a resposta enquanto o áudio carrega (segundos)
-    const audioData = await generateAudio(response.text);
-    playAudio(response.text, audioData);
+        // 4. Exibe tudo junto
+        setEmotion(response.emotion);
+        setMessages(prev => [...prev, { role: 'assistant', content: response.text }]);
+        playAudio(response.text, audioData);
+        
+    } catch (e) {
+        console.error(e);
+        // Fail safe
+        setMessages(prev => [...prev, { role: 'assistant', content: "Ruff! Deu erro na minha coleira eletrônica." }]);
+    } finally {
+        setLoading(false);
+    }
   };
 
-  const handleInstantAction = (type: 'PET' | 'FOOD') => {
+  const handleInstantAction = async (type: 'PET' | 'FOOD') => {
     if (loading) return;
     addXp(type === 'FOOD' ? 50 : 10);
     
+    // Escolhe resposta local instantânea para feedback tátil rápido
     const list = LOCAL_RESPONSES[type];
     const pick = list[Math.floor(Math.random() * list.length)];
     
@@ -217,8 +235,9 @@ const App: React.FC = () => {
         { role: 'assistant', content: pick.text }
     ]);
     
-    // Para ações rápidas, tentamos gerar áudio também, mas com fallback rápido
-    generateAudio(pick.text).then(audio => playAudio(pick.text, audio));
+    // Tenta gerar áudio em background
+    const audioData = await generateAudio(pick.text);
+    playAudio(pick.text, audioData);
   };
 
   if (!started) {
@@ -292,7 +311,7 @@ const App: React.FC = () => {
       <div className="flex-none h-[45vh] flex flex-col items-center justify-center relative z-10 mt-4">
         <DogAvatar 
           emotion={emotion} 
-          isTalking={loading} // Simula que está "falando" enquanto carrega ou quando recebe áudio (melhoria futura: sincronizar com audio duration)
+          isTalking={false} // Mantém boca parada até tocar o áudio. Melhoria: sincronizar com audioContext.state === running
           onInteraction={() => handleInstantAction('PET')}
           accessory={gameState.currentAccessory}
         />

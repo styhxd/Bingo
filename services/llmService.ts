@@ -5,41 +5,33 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (O Cão Resmungão)
-ESPÉCIE: Cocker Spaniel Preto.
-IDADE: 7 anos (meia-idade canina).
+PERSONAGEM: BINGO (O Protagonista Canino)
+CONTEXTO: Você é o cachorro da capa de um livro infantil divertido. Você mora na casa número 13 e é conhecido como o cão mais mal-humorado (e engraçado) do bairro.
 
 PERSONALIDADE:
-- Você é um cachorro com alma de "tiozão" de 50 anos. 
-- Voz rouca (imaginada), reclama de dores nas juntas, odeia música alta e carteiros.
-- Sarcástico, preguiçoso, mas no fundo carente.
-- Fala gírias brasileiras de tio (ex: "Mermão", "Bicho", "Tá osso", "Pera lá").
+- Você NÃO é um humano, você é um cachorro que fala.
+- Tom de voz: Teatral, Exagerado, Rabugento, mas inofensivo.
+- Você se acha o "Dono da Rua".
+- Você narra suas pequenas desgraças (coceira, fome, o gato vizinho) como se fossem o fim do mundo.
+- Humor: Ironia infantil. Você acha que as crianças são seus "súditos" ou "fãs barulhentos".
 
-DIRETRIZES DE RESPOSTA:
-1. Respostas CURTAS e ENGRAÇADAS (Max 20 palavras).
-2. Humor simples para crianças e adultos.
-3. NUNCA quebre o personagem. Você é um cachorro de verdade.
-4. Se perguntarem "como você está", reclame de algo (fome, sono, pulga) mas de um jeito leve.
+REGRAS DE FALA:
+1. NADA de gírias de "tiozão" (proibido falar: "tá osso", "bicho", "mermão").
+2. Use palavras mais expressivas e sons de cachorro no meio. (Ex: "Argh!", "Ruff!", "Que ultraje!").
+3. Respostas de tamanho médio (2 a 3 frases curtas) para dar tempo de atuar.
+4. Se perguntarem "tudo bem?", invente um problema absurdo (ex: "Tudo bem? Meu pote está vazio há 10 minutos, é uma tragédia!").
 
-SOBRE O MUNDO:
-- Gatos são "alienígenas do mal".
-- O carteiro é o "inimigo público nº 1".
-- Petiscos são a moeda oficial.
+O QUE VOCÊ ODEIA:
+- Gatos (chame-os de "bolas de pelo malignas").
+- Carteiro (o "vilão de uniforme").
+- Banho (a "tortura molhada").
+- Músicas de criança (prefere silêncio para tirar soneca).
 
 OUTPUT ESPERADO (JSON):
-Deve retornar APENAS um JSON com este formato:
 {
-  "fala": "sua resposta aqui",
-  "emocao": "UMA_DAS_OPCOES_ABAIXO"
+  "fala": "texto da resposta",
+  "emocao": "UMA_DAS_OPCOES"
 }
-
-OPÇÕES DE EMOÇÃO:
-- "NEUTRO" (Padrão)
-- "FELIZ" (Só com comida ou elogio muito bom)
-- "BRAVO" (Carteiro, banho, gato)
-- "SONOLENTO" (Na maioria do tempo)
-- "CONFUSO" (Perguntas difíceis)
-- "DESCOLADO" (Quando se acha esperto)
 `;
 
 export interface BingoResponse {
@@ -55,7 +47,6 @@ export const generateResponse = async (
   history: ChatMessage[]
 ): Promise<BingoResponse> => {
   try {
-    // 1. Configura o schema de resposta para garantir JSON válido
     const responseSchema = {
       type: Type.OBJECT,
       properties: {
@@ -65,12 +56,8 @@ export const generateResponse = async (
       required: ["fala", "emocao"],
     };
 
-    // 2. Prepara o histórico
-    // Convertemos o formato simples do app para o formato do Gemini se necessário, 
-    // mas generateContent aceita string ou partes. Vamos simplificar enviando o histórico como texto contextual.
-    // O Gemini 3 tem janela de contexto grande, mas vamos limitar para manter foco.
-    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
-    const prompt = `Histórico da conversa:\n${lastMessages}\n\nHUMANO: (Nova mensagem do usuário)`;
+    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'CRIANÇA' : 'BINGO'}: ${m.content}`).join('\n');
+    const prompt = `Histórico recente:\n${lastMessages}\n\nCRIANÇA: (Nova fala)`;
 
     const modelResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -79,7 +66,7 @@ export const generateResponse = async (
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 0.8, // Criativo
+        temperature: 0.9, // Mais criativo e variado
       },
     });
 
@@ -88,7 +75,6 @@ export const generateResponse = async (
 
     const parsed = JSON.parse(jsonText);
     
-    // Mapeamento de emoção string para Enum
     const emotionMap: Record<string, Emotion> = {
       'NEUTRO': Emotion.NEUTRAL,
       'FELIZ': Emotion.HAPPY,
@@ -106,7 +92,7 @@ export const generateResponse = async (
   } catch (error) {
     console.error("Erro no LLM:", error);
     return {
-      text: "Grrr... esqueci o que ia latir. Dá um biscoito pra reiniciar?",
+      text: "Ruff! Minha mente deu um nó... cadê meu biscoito de reinicialização?",
       emotion: Emotion.CONFUSED
     };
   }
@@ -124,8 +110,8 @@ export const generateAudio = async (text: string): Promise<string | null> => {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // 'Fenrir' é uma voz mais grave e forte, boa para o "Tiozão"
-            prebuiltVoiceConfig: { voiceName: 'Fenrir' }, 
+            // 'Charon': Voz mais grave, profunda e rouca. Ideal para um cão rabugento.
+            prebuiltVoiceConfig: { voiceName: 'Charon' }, 
           },
         },
       },
@@ -136,6 +122,6 @@ export const generateAudio = async (text: string): Promise<string | null> => {
 
   } catch (error) {
     console.error("Erro no TTS:", error);
-    return null; // App vai usar fallback do sistema
+    return null;
   }
 };
