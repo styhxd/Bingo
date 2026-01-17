@@ -41,33 +41,41 @@ const getAI = () => {
 
 // --- POLLINATION FALLBACK (GRATUITO/ILIMITADO) ---
 const callPollination = async (system: string, prompt: string): Promise<string | null> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // Timeout de 15s para não travar
+
     try {
         const response = await fetch('https://text.pollinations.ai/', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
             body: JSON.stringify({
                 messages: [
-                    { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown." },
+                    { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown, sem explicações antes ou depois." },
                     { role: 'user', content: prompt }
                 ],
-                model: 'gpt-4o-mini', // Atualizado para modelo mais inteligente e consistente
-                seed: Math.floor(Math.random() * 10000), // Seed aleatória para variar respostas
+                model: 'gpt-4o-mini', 
+                seed: Math.floor(Math.random() * 10000), 
                 jsonMode: true 
             })
         });
         
+        clearTimeout(timeoutId);
+
         if (!response.ok) {
-             // Fallback para GET simples se o POST falhar por algum motivo
+             // Fallback para GET simples
              const fullPrompt = `${system}\n\n${prompt}\n\nResponda APENAS JSON.`;
              const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=gpt-4o-mini`;
-             const res2 = await fetch(getUrl);
+             const res2 = await fetch(getUrl); // Sem timeout no GET de backup pra tentar salvar
              return await res2.text();
         }
         
         return await response.text();
     } catch (e) {
-        console.error("Pollination Error:", e);
+        console.error("Pollination Error ou Timeout:", e);
         return null;
+    } finally {
+        clearTimeout(timeoutId);
     }
 };
 
@@ -98,19 +106,25 @@ export const generateResponse = async (
 
   const parseResult = (text: string) => {
     try {
-        // Tenta limpar markdown ```json ... ``` caso venha sujo
+        if (!text) return null;
+        // Limpeza agressiva de Markdown
         const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        // Tenta encontrar o primeiro { e o ultimo } para isolar o JSON
+        
+        // Tenta encontrar o JSON dentro da string (caso o modelo fale algo antes)
         const start = clean.indexOf('{');
         const end = clean.lastIndexOf('}');
-        if (start === -1 || end === -1) throw new Error("JSON não encontrado");
         
-        const jsonStr = clean.substring(start, end + 1);
-        const parsed = JSON.parse(jsonStr);
-        return {
-            text: parsed.fala,
-            emotion: emotionMap[parsed.emocao] || Emotion.ANGRY
-        };
+        if (start !== -1 && end !== -1) {
+            const jsonStr = clean.substring(start, end + 1);
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.fala) {
+                return {
+                    text: parsed.fala,
+                    emotion: emotionMap[parsed.emocao] || Emotion.ANGRY
+                };
+            }
+        }
+        throw new Error("JSON inválido ou incompleto");
     } catch (e) {
         return null;
     }
@@ -155,23 +169,36 @@ export const generateResponse = async (
   // 2. TENTATIVA: POLLINATION (FALLBACK GRATUITO)
   console.log("Usando Fallback (Pollination)...");
   const fallbackResponse = await callPollination(SYSTEM_INSTRUCTION, prompt);
+  
   if (fallbackResponse) {
+      // Tenta fazer o parse bonitinho
       const parsed = parseResult(fallbackResponse);
       if (parsed) return parsed;
       
-      // Se falhar o parse, tenta usar o texto cru se parecer uma resposta
-      if (fallbackResponse.length > 5 && !fallbackResponse.includes("{")) {
-           return {
-               text: fallbackResponse,
-               emotion: Emotion.ANGRY // Assume rabugento se o formato quebrar
-           }
+      // Se o parse falhar, usa o texto cru mesmo (limpando sujeira de JSON se tiver)
+      // Isso evita o balão vazio
+      let rawText = fallbackResponse
+          .replace(/```json/g, '')
+          .replace(/```/g, '')
+          .replace(/{/g, '')
+          .replace(/}/g, '')
+          .replace(/"fala":/g, '')
+          .replace(/"emocao":/g, '')
+          .trim();
+
+      // Se o texto ficou muito curto ou vazio depois da limpeza, usa mensagem de erro
+      if (rawText.length < 2) rawText = "Grr... não entendi nada. Fale direito.";
+
+      return {
+          text: rawText,
+          emotion: Emotion.ANGRY 
       }
   }
 
-  // 3. FAILSAFE FINAL (Se tudo falhar)
+  // 3. FAILSAFE FINAL (Timeout ou Erro de Rede)
   return {
-      text: "Grr... minha conexão cósmica falhou. Deve ser culpa desse provedor de internet barato que você paga.",
-      emotion: Emotion.CONFUSED
+      text: "Zzz... perdi a conexão com a realidade. Tente me acordar de novo.",
+      emotion: Emotion.SLEEPY
   };
 };
 
