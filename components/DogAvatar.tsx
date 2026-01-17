@@ -8,7 +8,7 @@ interface DogAvatarProps {
   accessory: Accessory;
 }
 
-const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction, accessory }) => {
+const DogAvatar: React.FC<DogAvatarProps> = ({ emotion = Emotion.NEUTRAL, isTalking = false, onInteraction, accessory = 'NONE' }) => {
   
   // Dynamic Styles based on Emotion
   const eyeStyle = useMemo(() => {
@@ -57,7 +57,7 @@ const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction
       <div className="absolute top-20 left-1/2 transform -translate-x-1/2 w-40 flex justify-between z-30 px-2">
         {/* Left Eye Group */}
         <div className="relative flex flex-col items-center justify-center">
-            {/* Eyebrow - Moved OUTSIDE the eye div and adjusted position/index */}
+            {/* Eyebrow */}
             <div className={`absolute -top-6 w-12 h-3 bg-slate-600 rounded-full transition-all duration-500 z-40
               ${emotion === Emotion.ANGRY ? 'rotate-12 translate-y-2' : ''}
               ${emotion === Emotion.CONFUSED ? '-rotate-12 -translate-y-2' : ''}
@@ -90,13 +90,9 @@ const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction
       {(accessory === 'GLASSES' || emotion === Emotion.COOL) && (
         <div className="absolute top-[4.5rem] left-1/2 transform -translate-x-1/2 z-40 w-48 drop-shadow-xl pointer-events-none">
           <svg viewBox="0 0 200 80" className="w-full h-full">
-            {/* Left Lens */}
-            <path d="M10,20 Q10,10 30,10 L80,10 Q100,10 100,20 L100,50 Q100,70 80,70 L30,70 Q10,70 10,50 Z" className="fill-slate-900 stroke-2 stroke-white"/>
-            {/* Right Lens */}
-            <path d="M110,20 Q110,10 130,10 L180,10 Q200,10 200,20 L200,50 Q200,70 180,70 L130,70 Q110,70 110,50 Z" className="fill-slate-900 stroke-2 stroke-white"/>
-            {/* Bridge */}
+            <path d="M10,20 Q10,10 30,10 L80,10 Q100,10 100,20 L100,50 Q100,70 80,70 L30,70 Q10,70 10,50 Z" className="fill-slate-900" stroke="white" strokeWidth="2"/>
+            <path d="M110,20 Q110,10 130,10 L180,10 Q200,10 200,20 L200,50 Q200,70 180,70 L130,70 Q110,70 110,50 Z" className="fill-slate-900" stroke="white" strokeWidth="2"/>
             <rect x="95" y="25" width="20" height="5" className="fill-white"/>
-            {/* Shine */}
             <path d="M20,20 L40,20 L30,40 Z" className="fill-white opacity-20"/>
             <path d="M120,20 L140,20 L130,40 Z" className="fill-white opacity-20"/>
           </svg>
@@ -118,13 +114,9 @@ const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction
       {accessory === 'HAT' && (
         <div className="absolute -top-12 left-1/2 transform -translate-x-1/2 z-40 w-56 drop-shadow-xl pointer-events-none">
            <svg viewBox="0 0 200 120" className="w-full h-full">
-             {/* Cap Main */}
-             <path d="M40,80 Q40,10 100,10 T160,80 Z" className="fill-blue-600 stroke-4 stroke-black"/>
-             {/* Visor */}
-             <path d="M30,75 Q100,60 170,75 L190,95 Q100,85 10,95 Z" className="fill-blue-800 stroke-4 stroke-black"/>
-             {/* Button */}
+             <path d="M40,80 Q40,10 100,10 T160,80 Z" className="fill-blue-600" stroke="black" strokeWidth="4"/>
+             <path d="M30,75 Q100,60 170,75 L190,95 Q100,85 10,95 Z" className="fill-blue-800" stroke="black" strokeWidth="4"/>
              <circle cx="100" cy="10" r="8" className="fill-blue-800"/>
-             {/* Logo */}
              <text x="100" y="60" textAnchor="middle" className="fill-white font-black text-4xl font-fredoka">B</text>
            </svg>
         </div>
@@ -134,9 +126,9 @@ const DogAvatar: React.FC<DogAvatarProps> = ({ emotion, isTalking, onInteraction
       {accessory === 'BOWTIE' && (
         <div className="absolute top-[13.5rem] left-1/2 transform -translate-x-1/2 z-40 w-24 drop-shadow-md pointer-events-none">
           <svg viewBox="0 0 100 50" className="w-full h-full">
-             <path d="M50,25 L10,0 L10,50 Z" className="fill-red-600 stroke-2 stroke-black"/>
-             <path d="M50,25 L90,0 L90,50 Z" className="fill-red-600 stroke-2 stroke-black"/>
-             <circle cx="50" cy="25" r="10" className="fill-red-800 stroke-2 stroke-black"/>
+             <path d="M50,25 L10,0 L10,50 Z" className="fill-red-600" stroke="black" strokeWidth="2"/>
+             <path d="M50,25 L90,0 L90,50 Z" className="fill-red-600" stroke="black" strokeWidth="2"/>
+             <circle cx="50" cy="25" r="10" className="fill-red-800" stroke="black" strokeWidth="2"/>
           </svg>
         </div>
       )}

@@ -6,11 +6,11 @@ import { ChatMessage, Emotion, GameState } from './types';
 
 // --- LOCAL BRAIN (Apenas frases de carregamento) ---
 const LOADING_PHRASES = [
-    "Rosnando pro nada...",
-    "Coçando a pulga...",
-    "Julgando sua roupa...",
-    "Ignorando o carteiro...",
-    "Limpando a pata..."
+    "Grrr...",
+    "Hmpf...",
+    "Que saco...",
+    "Afs...",
+    "Zzz..."
 ];
 
 // --- AUDIO UTILS ---
@@ -67,7 +67,7 @@ const App: React.FC = () => {
       const interval = setInterval(() => {
         const random = LOADING_PHRASES[Math.floor(Math.random() * LOADING_PHRASES.length)];
         setLoadingText(random);
-      }, 2000);
+      }, 1500);
       return () => clearInterval(interval);
     }
   }, [loading]);
@@ -97,12 +97,21 @@ const App: React.FC = () => {
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
         
-        // --- HACK DA VOZ ROUCA ---
-        // Diminui a velocidade de reprodução. Isso baixa o tom (pitch) da voz.
-        // 0.85 = Voz mais grossa, lenta e "monstruosa/canina".
-        source.playbackRate.value = 0.85; 
+        // --- PROCESSAMENTO DE VOZ "TIOZÃO/OGRO" ---
+        
+        // 1. Pitch Shift (Mais grave e lento)
+        source.playbackRate.value = 0.92; 
 
-        source.connect(audioContextRef.current.destination);
+        // 2. Filtro de Graves (Bass Boost) - Tira o som "anasalado/fino"
+        const bassFilter = audioContextRef.current.createBiquadFilter();
+        bassFilter.type = 'lowshelf';
+        bassFilter.frequency.value = 200; // Frequencias graves
+        bassFilter.gain.value = 15; // Aumenta 15dB (Muito grave)
+
+        // 3. Conecta: Fonte -> Filtro -> Saída
+        source.connect(bassFilter);
+        bassFilter.connect(audioContextRef.current.destination);
+
         source.start();
         currentSourceRef.current = source;
         return; 
@@ -111,17 +120,11 @@ const App: React.FC = () => {
       }
     }
 
-    // Fallback System Voice
+    // Fallback
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'pt-BR';
-    utterance.pitch = 0.1; // Mínimo possível
-    utterance.rate = 0.8; 
-    
-    const voices = window.speechSynthesis.getVoices();
-    const preferred = voices.find(v => v.lang.includes('BR') && v.name.toLowerCase().includes('google')) || 
-                      voices.find(v => v.lang.includes('BR'));
-    
-    if (preferred) utterance.voice = preferred;
+    utterance.pitch = 0.1;
+    utterance.rate = 0.8;
     window.speechSynthesis.speak(utterance);
   };
 
@@ -154,7 +157,7 @@ const App: React.FC = () => {
   const handleStart = async () => {
     setStarted(true);
     initAudioContext();
-    const intro = "Hmpf... Quem acordou a fera? Espero que tenha um bom motivo.";
+    const intro = "Hmpf. Fala logo o que você quer.";
     
     if (audioContextRef.current) {
        const emptyBuffer = audioContextRef.current.createBuffer(1, 1, 22050);
@@ -164,25 +167,28 @@ const App: React.FC = () => {
        source.start();
     }
 
-    // Delay artificial pequeno para garantir que o audioContext esteja pronto
     setLoading(true);
-    setLoadingText("Acordando mal-humorado...");
+    setLoadingText("Acordando...");
     
-    const audioData = await generateAudio(intro);
-    setLoading(false);
-    
-    setMessages([{ role: 'assistant', content: intro }]);
-    setEmotion(Emotion.ANGRY);
-    playAudio(intro, audioData);
+    // Tenta gerar o áudio. Se falhar (ex: erro de rede/api), não trava o app.
+    try {
+        const audioData = await generateAudio(intro);
+        setMessages([{ role: 'assistant', content: intro }]);
+        setEmotion(Emotion.ANGRY);
+        playAudio(intro, audioData);
+    } catch (e) {
+        setMessages([{ role: 'assistant', content: intro }]);
+        setEmotion(Emotion.ANGRY);
+    } finally {
+        setLoading(false);
+    }
   };
 
   const processInteraction = async (userText: string, actionContext?: string) => {
     if (loading) return;
 
-    // Atualiza UI
-    // Se for ação (carinho/comida), mostramos uma mensagem descritiva do usuário
     const visibleUserMessage = actionContext 
-        ? (actionContext === 'CARINHO' ? '*Tenta fazer carinho*' : '*Oferece um petisco duvidoso*') 
+        ? (actionContext === 'CARINHO' ? '*Tenta fazer carinho*' : '*Oferece comida*') 
         : userText;
 
     const newHistory: ChatMessage[] = [...messages, { role: 'user', content: visibleUserMessage }];
@@ -191,13 +197,11 @@ const App: React.FC = () => {
     setLoading(true);
     setEmotion(Emotion.LOADING);
     
-    // Se for carinho/comida dá mais XP
     addXp(actionContext ? 50 : 20);
 
     try {
-        // Prepara contexto para IA
         const aiActionContext = actionContext 
-            ? (actionContext === 'CARINHO' ? 'O usuário tentou fazer carinho na sua cabeça.' : 'O usuário te ofereceu um petisco.') 
+            ? (actionContext === 'CARINHO' ? 'O usuário tentou encostar em você.' : 'O usuário te ofereceu comida.') 
             : undefined;
 
         const response = await generateResponse(newHistory, aiActionContext);
@@ -213,7 +217,7 @@ const App: React.FC = () => {
         
     } catch (e) {
         console.error(e);
-        setMessages(prev => [...prev, { role: 'assistant', content: "Grrr... buguei. Tenta de novo." }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: "Grrr... (Erro)" }]);
     } finally {
         setLoading(false);
     }
@@ -225,7 +229,6 @@ const App: React.FC = () => {
   };
 
   const handleInstantAction = (type: 'PET' | 'FOOD') => {
-    // Agora chama a IA para gerar a resposta
     processInteraction('', type === 'PET' ? 'CARINHO' : 'FOOD');
   };
 

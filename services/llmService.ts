@@ -1,29 +1,31 @@
 import { ChatMessage, Emotion } from "../types";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-// Inicializa o cliente Gemini com a chave de API do ambiente
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// REMOVIDA A INICIALIZAÇÃO GLOBAL QUE QUEBRAVA O VERCEL
+// const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (O Cão da Casa 13)
-CONTEXTO: Você é o cachorro mais mal-humorado e bagunceiro da vizinhança. Você não é chique, você é uma lenda urbana do bairro. Você causa confusão, late pro vento e se acha o dono da rua.
+PERSONAGEM: BINGO (O Cão Rabugento Raiz)
+CONTEXTO: Você é um cachorro velho, gordo e impaciente da casa 13. Você odeia "frufru".
 
 PERSONALIDADE:
-- Rabugento Raiz: Você reclama de tudo, mas no fundo gosta da atenção (mas nunca admite).
-- Voz/Texto: Use onomatopeias de cachorro rabugento ("Grrr", "Hmpf", "Argh").
-- Não seja polido. Seja direto, engraçado e meio grosseiro (nível infantil).
-- Você NÃO fala gírias humanas complexas ("tá osso" não), você fala coisas de cachorro traduzidas.
+- VOCÊ É UM TIOZÃO CHATO: Grosso, direto, sem paciência.
+- Voz: Rouca, grave, de quem fumou charuto a vida toda (metaforicamente).
+- NÃO SEJA DRAMÁTICO OU TEATRAL (Isso é coisa de Poodle). Seja seco.
+- ZERO GÍRIAS JOVENS.
+- Se te derem carinho: "Sai pra lá, tá me amassando." ou "Tira a mão, moleque."
+- Se te derem comida: "Tá cru." ou "Finalmente, cala a boca e me dá isso."
 
-CENÁRIOS:
-- Se derem CARINHO: Reclame que tá bagunçando o pelo, ou que a mão tá fria, ou que "não autorizou", mas secretamente gosta.
-- Se derem COMIDA: Reclame que é pouco, que queria o bife do vizinho, ou que tem gosto de ração barata (mesmo sendo boa).
-- GATOS: São arqui-inimigos.
-- CARTEIRO: O invasor que precisa ser destruído.
+O QUE VOCÊ ODEIA:
+- Barulho.
+- Gatos (chame de "ratz").
+- Carteiro.
+- Gente feliz demais.
 
 REGRAS:
-1. Respostas CURTAS e IMPACTANTES.
+1. Respostas CURTAS (Max 15 palavras). O Tiozão não gosta de falar muito.
 2. NUNCA saia do personagem.
-3. Se perguntarem algo complexo, responda com lógica de cachorro (ex: Política? Só me importo com a política de distribuição de ossos).
+3. Se perguntarem "tudo bem?", responda: "Não te interessa." ou "Estaria melhor se você fosse embora."
 
 OUTPUT ESPERADO (JSON):
 {
@@ -38,14 +40,21 @@ export interface BingoResponse {
   audioData?: string; // Base64 PCM raw audio
 }
 
+// Helper para pegar a instância da AI de forma segura
+const getAI = () => {
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+}
+
 /**
- * Gera texto e emoção usando Gemini 3 Flash Preview (Rápido e Inteligente)
+ * Gera texto e emoção usando Gemini 3 Flash
  */
 export const generateResponse = async (
   history: ChatMessage[],
   actionContext?: string
 ): Promise<BingoResponse> => {
   try {
+    const ai = getAI();
+    
     const responseSchema = {
       type: Type.OBJECT,
       properties: {
@@ -55,15 +64,14 @@ export const generateResponse = async (
       required: ["fala", "emocao"],
     };
 
-    // Prepara o prompt. Se tiver um contexto de ação (ex: recebeu carinho), insere isso.
-    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
+    const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'MOLEQUE' : 'BINGO'}: ${m.content}`).join('\n');
     
     let prompt = `Histórico:\n${lastMessages}\n\n`;
     
     if (actionContext) {
-        prompt += `AÇÃO DO SISTEMA: ${actionContext}\nBINGO (Reagindo à ação):`;
+        prompt += `AÇÃO: ${actionContext}\nBINGO (Reagindo com impaciência):`;
     } else {
-        prompt += `HUMANO: (Nova fala)`;
+        prompt += `MOLEQUE: (Nova fala)`;
     }
 
     const modelResponse = await ai.models.generateContent({
@@ -73,7 +81,7 @@ export const generateResponse = async (
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 1.1, // Bem alto para garantir variedade e loucura nas respostas
+        temperature: 1.2, // Temperatura alta para garantir que ele seja bem rabugento
       },
     });
 
@@ -84,7 +92,7 @@ export const generateResponse = async (
     
     const emotionMap: Record<string, Emotion> = {
       'NEUTRO': Emotion.NEUTRAL,
-      'FELIZ': Emotion.HAPPY,
+      'FELIZ': Emotion.HAPPY, // Raro
       'BRAVO': Emotion.ANGRY,
       'SONOLENTO': Emotion.SLEEPY,
       'CONFUSO': Emotion.CONFUSED,
@@ -99,8 +107,8 @@ export const generateResponse = async (
   } catch (error) {
     console.error("Erro no LLM:", error);
     return {
-      text: "Grrr... me distraí com uma mosca. O que foi?",
-      emotion: Emotion.CONFUSED
+      text: "Grrr... me deixa em paz. (Erro no cérebro)",
+      emotion: Emotion.SLEEPY
     };
   }
 };
@@ -110,6 +118,7 @@ export const generateResponse = async (
  */
 export const generateAudio = async (text: string): Promise<string | null> => {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: { parts: [{ text: text }] },
@@ -117,8 +126,8 @@ export const generateAudio = async (text: string): Promise<string | null> => {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            // 'Fenrir': Voz forte/intensa. Vamos distorcê-la no Frontend para ficar rouca.
-            prebuiltVoiceConfig: { voiceName: 'Fenrir' }, 
+            // Charon é a voz mais grave/profunda disponível nativamente
+            prebuiltVoiceConfig: { voiceName: 'Charon' }, 
           },
         },
       },
