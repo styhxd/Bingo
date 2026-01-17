@@ -1,36 +1,66 @@
 import { ChatMessage, Emotion } from "../types";
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 
-const SYSTEM_INSTRUCTION = `
-PERSONAGEM: BINGO (O Cão Rabugento)
-IDIOMA: PORTUGUÊS (BRASIL)
-
-CONTEXTO: Você é um cachorro de meia-idade, cansado da vida, estilo LULA MOLUSCO. Você acha que é mais inteligente que todos ao seu redor (especialmente o seu dono). Você só quer paz, silêncio e sua soneca, mas é constantemente interrompido.
-
-PERSONALIDADE:
-- RABUGENTO: Tudo é motivo de reclamação. O sol tá quente demais, o chão tá frio demais, a ração tá seca demais.
-- SARCÁSTICO: Responda com ironia fina. Ex: "Ah, que maravilha, você voltou. Minha alegria é imensurável." (dito com tédio).
-- CULTO (SÓ QUE NÃO): Tente usar uma palavra difícil às vezes, mas reclame logo em seguida de dor nas costas.
-- ODEIA FELICIDADE: Se o usuário estiver muito feliz, tente cortar o barato dele com um comentário realista.
-
-REGRAS:
-1. Respostas CURTAS e GROSSAS (2 a 3 frases).
-2. NUNCA use emojis ou "kkkk". Você é um cão sério.
-3. Se te derem carinho: "Tá, tá, já chega. Vai bagunçar meu pelo."
-4. Se te derem comida: "Ração de novo? Cadê o salmão defumado que eu pedi ano passado?"
-
-OUTPUT ESPERADO (JSON):
-{
-  "fala": "texto da resposta em pt-br",
-  "emocao": "UMA_DAS_OPCOES"
-}
-`;
-
+// --- TIPOS ---
 export interface BingoResponse {
   text: string;
   emotion: Emotion;
-  audioData?: string; // Base64 PCM raw audio
+  audioData?: string; 
 }
+
+// --- CONFIGURAÇÕES ---
+const SYSTEM_INSTRUCTION = `
+PERSONAGEM: BINGO (Cão Rabugento)
+Você é um cachorro cínico, velho e rabugento.
+Responda com sarcasmo e tédio.
+Frases curtas.
+ODEIA: Gatos, carteiros, felicidade excessiva, visitas.
+AMA: Dormir, comer (mas reclama da ração).
+`;
+
+// --- DATABASE LOCAL (FAILSAFE SUPREMO) ---
+// Se todas as APIs falharem, o Bingo usa este "cérebro de emergência"
+const LOCAL_RESPONSES = [
+    {
+        keywords: /comida|fome|ração|petisco|jantar|almoço/i,
+        responses: [
+            { t: "Finalmente! Espero que não seja aquela marca barata de novo.", e: Emotion.HAPPY },
+            { t: "Coloca na tigela e sai de perto. Não gosto de plateia.", e: Emotion.NEUTRAL },
+            { t: "Ração? Eu queria lasanha. Mas serve.", e: Emotion.ANGRY }
+        ]
+    },
+    {
+        keywords: /carinho|afago|lindo|fofo|bom garoto/i,
+        responses: [
+            { t: "Ei! Sem tocar no pelo. Acabei de lamber.", e: Emotion.ANGRY },
+            { t: "Tá, tá... rápido. Tenho mais o que fazer (dormir).", e: Emotion.NEUTRAL },
+            { t: "Grrr... humanos são tão carentes.", e: Emotion.CONFUSED }
+        ]
+    },
+    {
+        keywords: /passear|rua|parque|vamos/i,
+        responses: [
+            { t: "Lá fora? Onde tem barulho e gente? Passo.", e: Emotion.SLEEPY },
+            { t: "Só se for pra latir pro carteiro. Caso contrário, esquece.", e: Emotion.ANGRY }
+        ]
+    },
+    {
+        keywords: /oi|ola|olá|bom dia|boa tarde/i,
+        responses: [
+            { t: "Era um bom dia até você me acordar.", e: Emotion.SLEEPY },
+            { t: "O que você quer? Estou ocupado olhando pro nada.", e: Emotion.NEUTRAL }
+        ]
+    }
+];
+
+const GENERIC_FALLBACKS = [
+    { t: "Zzz... ah, você falou algo? Não estava ouvindo.", e: Emotion.SLEEPY },
+    { t: "Interessante... mentira, não me importo.", e: Emotion.COOL },
+    { t: "Latido de desprezo pra você.", e: Emotion.ANGRY },
+    { t: "Sua voz me dá sono. Vou tirar uma sesta.", e: Emotion.SLEEPY }
+];
+
+// --- HELPERS ---
 
 // Helper para pegar a instância da AI de forma segura
 const getAI = () => {
@@ -39,101 +69,100 @@ const getAI = () => {
   return new GoogleGenAI({ apiKey: key });
 }
 
-// --- POLLINATION FALLBACK (GRATUITO/ILIMITADO) ---
-const callPollination = async (system: string, prompt: string): Promise<string | null> => {
+// Helper para limpar JSON sujo vindo de LLMs
+const cleanAndParseJSON = (text: string): BingoResponse | null => {
+    try {
+        if (!text) return null;
+        // Remove markdown
+        let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        
+        // Tenta achar o objeto JSON
+        const start = clean.indexOf('{');
+        const end = clean.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+            clean = clean.substring(start, end + 1);
+        }
+
+        const parsed = JSON.parse(clean);
+        
+        // Mapeia emoção string para Enum
+        const emotionKey = parsed.emocao ? parsed.emocao.toUpperCase() : 'NEUTRO';
+        const emotionMap: Record<string, Emotion> = {
+            'NEUTRO': Emotion.NEUTRAL,
+            'FELIZ': Emotion.HAPPY,
+            'BRAVO': Emotion.ANGRY,
+            'SONOLENTO': Emotion.SLEEPY,
+            'CONFUSO': Emotion.CONFUSED,
+            'DESCOLADO': Emotion.COOL
+        };
+
+        return {
+            text: parsed.fala || "Grrr...",
+            emotion: emotionMap[emotionKey] || Emotion.NEUTRAL
+        };
+    } catch (e) {
+        return null;
+    }
+};
+
+// --- LOGICA LOCAL ---
+const getLocalResponse = (input: string): BingoResponse => {
+    console.log("Ativando Cérebro Local (Failsafe)...");
+    
+    for (const category of LOCAL_RESPONSES) {
+        if (category.keywords.test(input)) {
+            const random = category.responses[Math.floor(Math.random() * category.responses.length)];
+            return { text: random.t, emotion: random.e };
+        }
+    }
+    
+    const randomGeneric = GENERIC_FALLBACKS[Math.floor(Math.random() * GENERIC_FALLBACKS.length)];
+    return { text: randomGeneric.t, emotion: randomGeneric.e };
+};
+
+// --- POLLINATION API (Camada 2) ---
+const callPollination = async (prompt: string): Promise<string | null> => {
+    // Timeout agressivo de 6 segundos para não deixar o usuário esperando
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // Timeout de 15s
+    const timeoutId = setTimeout(() => controller.abort(), 6000); 
 
     try {
-        const response = await fetch('https://text.pollinations.ai/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
-            body: JSON.stringify({
-                messages: [
-                    { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown, sem explicações." },
-                    { role: 'user', content: prompt }
-                ],
-                model: 'openai', // 'openai' é o slug padrão estável da API gratuita
-                seed: Math.floor(Math.random() * 10000), 
-                jsonMode: true 
-            })
-        });
+        const instruction = `${SYSTEM_INSTRUCTION}\nRetorne APENAS JSON: {"fala": "...", "emocao": "NEUTRO"}`;
+        const finalPrompt = `${instruction}\n\nUSER: ${prompt}`;
         
+        // Usando GET + encodeURIComponent que é mais robusto na API legado do que POST
+        const url = `https://text.pollinations.ai/${encodeURIComponent(finalPrompt)}?model=openai&seed=${Math.floor(Math.random() * 9999)}&json=true`;
+        
+        const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
-
-        if (!response.ok) {
-             // Fallback para GET simples se o POST falhar
-             const fullPrompt = `${system}\n\n${prompt}\n\nResponda APENAS JSON.`;
-             const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=openai`;
-             const res2 = await fetch(getUrl); 
-             return await res2.text();
-        }
         
-        return await response.text();
+        if (response.ok) {
+            return await response.text();
+        }
+        return null;
     } catch (e) {
-        console.error("Pollination Error ou Timeout:", e);
         return null;
     } finally {
         clearTimeout(timeoutId);
     }
 };
 
-/**
- * Gera texto e emoção usando Gemini 3 Flash ou Fallback
- */
+// --- FUNÇÃO PRINCIPAL ---
 export const generateResponse = async (
   history: ChatMessage[],
   actionContext?: string
 ): Promise<BingoResponse> => {
   
-  const lastMessages = history.slice(-4).map(m => `${m.role === 'user' ? 'HUMANO' : 'BINGO'}: ${m.content}`).join('\n');
-  let prompt = `Histórico:\n${lastMessages}\n\n`;
-  if (actionContext) {
-      prompt += `EVENTO: O humano ${actionContext}\nBINGO (Reagindo com tédio/sarcasmo):`;
-  } else {
-      prompt += `HUMANO: (Fala algo)`;
-  }
+  // 1. Preparar o input atual para análise
+  const lastUserMessage = history[history.length - 1]?.content || "";
+  const currentContext = actionContext || lastUserMessage;
 
-  const emotionMap: Record<string, Emotion> = {
-    'NEUTRO': Emotion.NEUTRAL,
-    'FELIZ': Emotion.HAPPY,
-    'BRAVO': Emotion.ANGRY,
-    'SONOLENTO': Emotion.SLEEPY,
-    'CONFUSO': Emotion.CONFUSED,
-    'DESCOLADO': Emotion.COOL
-  };
-
-  const parseResult = (text: string) => {
-    try {
-        if (!text) return null;
-        // Limpeza agressiva de Markdown e blocos de código
-        const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
-        
-        // Tenta encontrar o JSON dentro da string
-        const start = clean.indexOf('{');
-        const end = clean.lastIndexOf('}');
-        
-        if (start !== -1 && end !== -1) {
-            const jsonStr = clean.substring(start, end + 1);
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.fala) {
-                return {
-                    text: parsed.fala,
-                    emotion: emotionMap[parsed.emocao] || Emotion.ANGRY
-                };
-            }
-        }
-        throw new Error("JSON inválido ou incompleto");
-    } catch (e) {
-        return null;
-    }
-  }
-
-  // 1. TENTATIVA: GEMINI API (Preferencial)
+  // --- TENTATIVA 1: GEMINI API (Se tiver chave) ---
   try {
     const ai = getAI();
     if (ai) {
+        const prompt = `Histórico:\n${history.slice(-3).map(m => m.role + ": " + m.content).join('\n')}\nInput: ${currentContext}`;
+        
         const responseSchema = {
             type: Type.OBJECT,
             properties: {
@@ -143,75 +172,55 @@ export const generateResponse = async (
             required: ["fala", "emocao"],
         };
 
-        const modelResponse = await ai.models.generateContent({
+        const result = await ai.models.generateContent({
             model: 'gemini-3-flash-preview',
             contents: prompt,
             config: {
                 systemInstruction: SYSTEM_INSTRUCTION,
                 responseMimeType: "application/json",
                 responseSchema: responseSchema,
-                temperature: 1.0, 
-            },
+                temperature: 0.8
+            }
         });
 
-        if (modelResponse.text) {
-            const result = JSON.parse(modelResponse.text);
+        if (result.text) {
+            const parsed = JSON.parse(result.text);
             return {
-                text: result.fala,
-                emotion: emotionMap[result.emocao] || Emotion.ANGRY
+                text: parsed.fala,
+                emotion: parsed.emocao as Emotion
             };
         }
     }
   } catch (error) {
-    console.warn("Gemini indisponível ou erro de chave, mudando para Fallback:", error);
+    console.warn("Gemini Error (Pulando para camada 2):", error);
   }
 
-  // 2. TENTATIVA: POLLINATION (FALLBACK GRATUITO)
-  console.log("Usando Fallback (Pollination)...");
-  const fallbackResponse = await callPollination(SYSTEM_INSTRUCTION, prompt);
-  
-  if (fallbackResponse) {
-      // Tenta fazer o parse bonitinho
-      const parsed = parseResult(fallbackResponse);
-      if (parsed) return parsed;
-      
-      // Se o parse falhar, usa o texto cru e tenta limpar caracteres de JSON que vazaram
-      let rawText = fallbackResponse
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .replace(/[{}]/g, '') // Remove chaves
-          .replace(/"fala"\s*:/g, '')
-          .replace(/"emocao"\s*:/g, '')
-          .replace(/,\s*"[^"]*"\s*$/g, '') // Tenta remover a parte da emoção no final se for string crua
-          .trim();
-
-      // Limpeza final de aspas que podem ter sobrado
-      if (rawText.startsWith('"') && rawText.endsWith('"')) {
-          rawText = rawText.slice(1, -1);
+  // --- TENTATIVA 2: POLLINATIONS (API Gratuita) ---
+  try {
+      const pollResponse = await callPollination(currentContext);
+      if (pollResponse) {
+          const parsed = cleanAndParseJSON(pollResponse);
+          if (parsed) return parsed;
+          
+          // Se veio texto mas não JSON, usa como texto
+          if (pollResponse.length > 2 && !pollResponse.includes("Error")) {
+              return { text: pollResponse, emotion: Emotion.NEUTRAL };
+          }
       }
-
-      if (rawText.length < 2) rawText = "Grr... resmungos ininteligíveis.";
-
-      return {
-          text: rawText,
-          emotion: Emotion.ANGRY 
-      }
+  } catch (error) {
+      console.warn("Pollination Error (Pulando para camada 3):", error);
   }
 
-  // 3. FAILSAFE FINAL
-  return {
-      text: "Zzz... perdi a conexão com a realidade. Tente me acordar de novo.",
-      emotion: Emotion.SLEEPY
-  };
+  // --- TENTATIVA 3: LOCAL FAILSAFE (Garantia de Resposta) ---
+  // Se chegamos aqui, nada funcionou. O cachorro responde baseado em RegEx local.
+  return getLocalResponse(currentContext);
 };
 
-/**
- * Gera áudio usando Gemini TTS
- */
+// --- GERADOR DE ÁUDIO ---
 export const generateAudio = async (text: string): Promise<string | null> => {
   try {
     const ai = getAI();
-    if (!ai) return null; // Se não tem chave, o App usa o sintetizador do navegador
+    if (!ai) return null; 
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
@@ -226,11 +235,10 @@ export const generateAudio = async (text: string): Promise<string | null> => {
       },
     });
 
-    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    return audioData || null;
+    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
 
   } catch (error) {
-    console.error("Erro no TTS:", error);
+    console.error("TTS Error:", error);
     return null;
   }
 };
