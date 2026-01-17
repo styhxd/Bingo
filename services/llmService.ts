@@ -42,7 +42,7 @@ const getAI = () => {
 // --- POLLINATION FALLBACK (GRATUITO/ILIMITADO) ---
 const callPollination = async (system: string, prompt: string): Promise<string | null> => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // Timeout de 15s para não travar
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // Timeout de 15s
 
     try {
         const response = await fetch('https://text.pollinations.ai/', {
@@ -51,10 +51,10 @@ const callPollination = async (system: string, prompt: string): Promise<string |
             signal: controller.signal,
             body: JSON.stringify({
                 messages: [
-                    { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown, sem explicações antes ou depois." },
+                    { role: 'system', content: system + "\nIMPORTANTE: Responda APENAS com o JSON raw, sem markdown, sem explicações." },
                     { role: 'user', content: prompt }
                 ],
-                model: 'gpt-4o-mini', 
+                model: 'openai', // 'openai' é o slug padrão estável da API gratuita
                 seed: Math.floor(Math.random() * 10000), 
                 jsonMode: true 
             })
@@ -63,10 +63,10 @@ const callPollination = async (system: string, prompt: string): Promise<string |
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-             // Fallback para GET simples
+             // Fallback para GET simples se o POST falhar
              const fullPrompt = `${system}\n\n${prompt}\n\nResponda APENAS JSON.`;
-             const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=gpt-4o-mini`;
-             const res2 = await fetch(getUrl); // Sem timeout no GET de backup pra tentar salvar
+             const getUrl = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}?model=openai`;
+             const res2 = await fetch(getUrl); 
              return await res2.text();
         }
         
@@ -107,10 +107,10 @@ export const generateResponse = async (
   const parseResult = (text: string) => {
     try {
         if (!text) return null;
-        // Limpeza agressiva de Markdown
+        // Limpeza agressiva de Markdown e blocos de código
         const clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
         
-        // Tenta encontrar o JSON dentro da string (caso o modelo fale algo antes)
+        // Tenta encontrar o JSON dentro da string
         const start = clean.indexOf('{');
         const end = clean.lastIndexOf('}');
         
@@ -175,19 +175,22 @@ export const generateResponse = async (
       const parsed = parseResult(fallbackResponse);
       if (parsed) return parsed;
       
-      // Se o parse falhar, usa o texto cru mesmo (limpando sujeira de JSON se tiver)
-      // Isso evita o balão vazio
+      // Se o parse falhar, usa o texto cru e tenta limpar caracteres de JSON que vazaram
       let rawText = fallbackResponse
           .replace(/```json/g, '')
           .replace(/```/g, '')
-          .replace(/{/g, '')
-          .replace(/}/g, '')
-          .replace(/"fala":/g, '')
-          .replace(/"emocao":/g, '')
+          .replace(/[{}]/g, '') // Remove chaves
+          .replace(/"fala"\s*:/g, '')
+          .replace(/"emocao"\s*:/g, '')
+          .replace(/,\s*"[^"]*"\s*$/g, '') // Tenta remover a parte da emoção no final se for string crua
           .trim();
 
-      // Se o texto ficou muito curto ou vazio depois da limpeza, usa mensagem de erro
-      if (rawText.length < 2) rawText = "Grr... não entendi nada. Fale direito.";
+      // Limpeza final de aspas que podem ter sobrado
+      if (rawText.startsWith('"') && rawText.endsWith('"')) {
+          rawText = rawText.slice(1, -1);
+      }
+
+      if (rawText.length < 2) rawText = "Grr... resmungos ininteligíveis.";
 
       return {
           text: rawText,
@@ -195,7 +198,7 @@ export const generateResponse = async (
       }
   }
 
-  // 3. FAILSAFE FINAL (Timeout ou Erro de Rede)
+  // 3. FAILSAFE FINAL
   return {
       text: "Zzz... perdi a conexão com a realidade. Tente me acordar de novo.",
       emotion: Emotion.SLEEPY
